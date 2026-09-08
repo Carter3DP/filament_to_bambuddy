@@ -648,6 +648,12 @@ function spoolName(spool){
   if(!spool) return t('mapping.unknown_spool');
   return [spool.brand,spool.material,spool.color_name].filter(Boolean).join(' ')+' (#'+spool.id+')';
 }
+function mappingSpoolName(spool){
+  const grams=Number(spool&&spool.remaining_weight);
+  if(!Number.isFinite(grams)) return spoolName(spool);
+  const kilograms=(grams/1000).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:3});
+  return spoolName(spool)+' — '+kilograms+' kg';
+}
 async function jsonResponse(response){
   const data=await response.json().catch(()=>({}));
   if(!response.ok || data.ok===false) throw new Error(data.error||('HTTP '+response.status));
@@ -658,7 +664,7 @@ function renderMappings(){
   select.innerHTML='';
   const blank=document.createElement('option'); blank.value=''; blank.textContent=t('mapping.choose_spool'); select.appendChild(blank);
   trackedSpools.forEach(spool=>{
-    const option=document.createElement('option'); option.value=String(spool.id); option.textContent=spoolName(spool); select.appendChild(option);
+    const option=document.createElement('option'); option.value=String(spool.id); option.textContent=mappingSpoolName(spool); select.appendChild(option);
   });
   if(trackedSpools.some(s=>String(s.id)===selected)) select.value=selected;
   const list=$('mappingList'); list.innerHTML='';
@@ -667,7 +673,7 @@ function renderMappings(){
   trackedSpools.forEach(spool=>{
     const row=document.createElement('div'); row.className='mapping-item';
     const info=document.createElement('div'); info.style.flex='1';
-    const name=document.createElement('div'); name.textContent=spoolName(spool);
+    const name=document.createElement('div'); name.textContent=mappingSpoolName(spool);
     const code=document.createElement('div'); code.className='mapping-code'; code.textContent=spoolMappings[spool.id]||t('mapping.not_set');
     info.append(name,code); row.appendChild(info);
     const edit=document.createElement('button'); edit.className='btn-secondary btn-small'; edit.textContent=t('mapping.edit');
