@@ -51,7 +51,7 @@
   .btn-primary{background:var(--green);color:#0a0a0a;width:100%}
   .btn-primary:disabled{background:#066b2c;color:#5a5a5a}
   .btn-secondary{background:var(--tertiary);color:var(--fg);width:100%}
-  #video{width:100%;border-radius:var(--radius);background:#000;aspect-ratio:4/3;object-fit:cover;display:block}
+  #video,#mapVideo,#assignVideo{width:100%;border-radius:var(--radius);background:#000;aspect-ratio:4/3;object-fit:cover;display:block}
   #videoWrap{position:relative;border-radius:var(--radius);overflow:hidden}
   .hidden{display:none}
   /* Scan viewfinder: guide box + corner brackets + sweeping scan line, so
@@ -81,6 +81,15 @@
   .hint{font-size:12px;color:var(--muted);margin-top:6px}
   .hint.err{color:var(--danger)}
   .status-dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px}
+  .section-title{font-weight:600;margin-bottom:4px}
+  .mapping-list{margin-top:12px;border-top:1px solid #444}
+  .mapping-item{display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #444}
+  .mapping-item:last-child{border-bottom:0}
+  .mapping-code{font:12px Menlo,Consolas,monospace;color:var(--green-light);overflow-wrap:anywhere}
+  .btn-small{width:auto;padding:7px 10px;font-size:12px;flex:0 0 auto}
+  .choice{display:flex;align-items:flex-start;gap:8px;padding:9px;border:1px solid #4a4a4a;border-radius:9px;margin-top:8px;color:var(--fg);font-size:14px}
+  .choice input{width:auto;margin:2px 0 0;accent-color:var(--green)}
+  .warning{border-left:3px solid #e0a800;padding:8px 10px;margin-top:10px;background:#392f12;border-radius:6px}
 </style>
 </head>
 <body>
@@ -102,6 +111,50 @@
     </div>
     <div id="refreshHint" class="hint"></div>
     <div style="margin-top:6px"><a id="clearCache" href="#" style="color:var(--muted);font-size:12px">{{ t('scan.clear_cache') }}</a></div>
+  </div>
+
+  <!-- Reusable barcode -> tracked spool mapping -->
+  <div class="card" id="barcodeMapCard">
+    <div class="section-title">{{ t('mapping.title') }}</div>
+    <div class="muted">{{ t('mapping.description') }}</div>
+    <label for="mapSpool">{{ t('mapping.spool') }}</label>
+    <select id="mapSpool"></select>
+    <label for="mapBarcode">{{ t('mapping.barcode') }}</label>
+    <input id="mapBarcode" autocomplete="off" placeholder="{{ t('mapping.barcode_placeholder') }}">
+    <div class="row" style="margin-top:10px">
+      <div><button id="mapScanBtn" class="btn-secondary">{{ t('mapping.scan') }}</button></div>
+      <div><button id="mapSaveBtn" class="btn-primary">{{ t('mapping.save') }}</button></div>
+    </div>
+    <div id="mapVideoWrap" class="hidden" style="margin-top:10px">
+      <video id="mapVideo" playsinline></video>
+    </div>
+    <button id="mapStopBtn" class="btn-secondary hidden" style="margin-top:10px">{{ t('scan.stop_camera') }}</button>
+    <div id="mapHint" class="hint"></div>
+    <div id="mappingList" class="mapping-list"></div>
+  </div>
+
+  <!-- Assign a mapped reusable spool to a printer slot -->
+  <div class="card" id="assignmentCard">
+    <div class="section-title">{{ t('assignment.title') }}</div>
+    <div class="muted">{{ t('assignment.description') }}</div>
+    <label for="assignPrinter">{{ t('assignment.printer') }}</label>
+    <select id="assignPrinter"></select>
+    <label for="assignSlot">{{ t('assignment.slot') }}</label>
+    <select id="assignSlot" disabled></select>
+    <label for="assignBarcode">{{ t('assignment.barcode') }}</label>
+    <input id="assignBarcode" autocomplete="off" placeholder="{{ t('assignment.barcode_placeholder') }}">
+    <button id="assignScanBtn" class="btn-secondary" style="margin-top:10px">{{ t('assignment.scan') }}</button>
+    <div id="assignVideoWrap" class="hidden" style="margin-top:10px">
+      <video id="assignVideo" playsinline></video>
+    </div>
+    <button id="assignStopBtn" class="btn-secondary hidden" style="margin-top:10px">{{ t('scan.stop_camera') }}</button>
+    <div id="assignHint" class="hint"></div>
+    <div id="existingChoice" class="warning hidden">
+      <div id="existingMessage"></div>
+      <label class="choice"><input type="radio" name="deleteExisting" value="keep" checked><span>{{ t('assignment.keep_existing') }}</span></label>
+      <label class="choice"><input type="radio" name="deleteExisting" value="delete"><span>{{ t('assignment.delete_existing') }}</span></label>
+    </div>
+    <button id="assignBtn" class="btn-primary" style="margin-top:12px">{{ t('assignment.assign') }}</button>
   </div>
 
   <!-- Scan -->
@@ -206,10 +259,15 @@
 // frontend i18next config uses).
 const I18N_LANG = {{ lang|tojson }};
 const I18N = {{ translations|tojson }};
+const I18N_EN = {{ translations_en|tojson }};
 function t(key, vars){
   const parts = key.split('.');
   let v = I18N;
   for(const p of parts){ v = (v && typeof v==='object') ? v[p] : undefined; }
+  if(typeof v !== 'string'){
+    v = I18N_EN;
+    for(const p of parts){ v = (v && typeof v==='object') ? v[p] : undefined; }
+  }
   if(typeof v !== 'string') return key;
   if(vars) for(const k in vars) v = v.split('{'+k+'}').join(String(vars[k]));
   return v;
@@ -222,7 +280,7 @@ function tn(key, count, vars){
 }
 
 const $ = id => document.getElementById(id);
-let reader = null, currentBarcode = null;
+let reader = null, accessoryReader = null, currentBarcode = null;
 
 // Register the service worker (enables installable PWA). Needs https or localhost.
 if('serviceWorker' in navigator && window.isSecureContext){
@@ -451,6 +509,7 @@ function setScanHint(msg, isErr){
 
 // ── Scanning ──
 $('startBtn').onclick = async () => {
+  stopAccessoryScan();
   if(!window.ZXingBrowser){ toast(t('scan.scanner_lib_failed'), false); return; }
   if(!navigator.mediaDevices || !window.isSecureContext){
     setScanHint(t('scan.camera_needs_https'), true);
@@ -522,6 +581,190 @@ function stopScan(){
   $('stopBtn').classList.add('hidden');
 }
 $('stopBtn').onclick = stopScan;
+
+// ── Reusable-spool barcode scanner ──
+function stopAccessoryScan(prefix){
+  try{ accessoryReader && accessoryReader.reset && accessoryReader.reset(); }catch(e){}
+  accessoryReader=null;
+  for(const p of ['map','assign']){
+    $(p+'VideoWrap').classList.add('hidden');
+    $(p+'ScanBtn').classList.remove('hidden');
+    $(p+'StopBtn').classList.add('hidden');
+  }
+}
+function reusableScanValue(result){
+  const raw=(result.getText()||'').trim();
+  if(!raw || raw.length>128) return null;
+  if(ZXingBrowser.BarcodeFormat && result.getBarcodeFormat()===ZXingBrowser.BarcodeFormat.UPC_E){
+    const expanded=expandUpcEToUpcA(raw);
+    return expanded && isValidUpcEanBarcode(expanded) ? expanded : null;
+  }
+  const gtin=extractGtinFromScan(raw);
+  if(gtin && isValidUpcEanBarcode(gtin)) return gtin;
+  // Reusable spool labels are user-defined, so Code 128 and QR values do not
+  // need to be retail GTINs. Preserve the exact decoded value as the key.
+  return raw;
+}
+async function startAccessoryScan(prefix, inputId){
+  if(!window.ZXingBrowser){ toast(t('scan.scanner_lib_failed'), false); return; }
+  if(!navigator.mediaDevices || !window.isSecureContext){
+    $(prefix+'Hint').textContent=t('scan.camera_needs_https');
+    $(prefix+'Hint').classList.add('err'); return;
+  }
+  stopScan(); stopAccessoryScan();
+  try{
+    accessoryReader=new ZXingBrowser.BrowserMultiFormatReader();
+    if(ZXingBrowser.BarcodeFormat){
+      const F=ZXingBrowser.BarcodeFormat;
+      accessoryReader.hints.set(3,true);
+      accessoryReader.possibleFormats=[F.UPC_A,F.UPC_E,F.EAN_13,F.EAN_8,F.QR_CODE,F.CODE_128];
+    }
+    $(prefix+'VideoWrap').classList.remove('hidden');
+    $(prefix+'ScanBtn').classList.add('hidden');
+    $(prefix+'StopBtn').classList.remove('hidden');
+    $(prefix+'Hint').classList.remove('err');
+    $(prefix+'Hint').textContent=t('scan.align_barcode');
+    await accessoryReader.decodeFromVideoDevice(undefined,$(prefix+'Video'),result=>{
+      if(!result) return;
+      const value=reusableScanValue(result);
+      if(!value) return;
+      $(inputId).value=value;
+      $(prefix+'Hint').textContent='';
+      stopAccessoryScan(prefix);
+    });
+  }catch(e){
+    $(prefix+'Hint').textContent=t('scan.camera_error',{error:e});
+    $(prefix+'Hint').classList.add('err'); stopAccessoryScan(prefix);
+  }
+}
+$('mapScanBtn').onclick=()=>startAccessoryScan('map','mapBarcode');
+$('assignScanBtn').onclick=()=>startAccessoryScan('assign','assignBarcode');
+$('mapStopBtn').onclick=()=>stopAccessoryScan('map');
+$('assignStopBtn').onclick=()=>stopAccessoryScan('assign');
+
+// ── Reusable barcode mappings ──
+let trackedSpools=[], spoolMappings={};
+function spoolName(spool){
+  if(!spool) return t('mapping.unknown_spool');
+  return [spool.brand,spool.material,spool.color_name].filter(Boolean).join(' ')+' (#'+spool.id+')';
+}
+async function jsonResponse(response){
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok || data.ok===false) throw new Error(data.error||('HTTP '+response.status));
+  return data;
+}
+function renderMappings(){
+  const select=$('mapSpool'), selected=select.value;
+  select.innerHTML='';
+  const blank=document.createElement('option'); blank.value=''; blank.textContent=t('mapping.choose_spool'); select.appendChild(blank);
+  trackedSpools.forEach(spool=>{
+    const option=document.createElement('option'); option.value=String(spool.id); option.textContent=spoolName(spool); select.appendChild(option);
+  });
+  if(trackedSpools.some(s=>String(s.id)===selected)) select.value=selected;
+  const list=$('mappingList'); list.innerHTML='';
+  if(!trackedSpools.length){ list.textContent=t('mapping.none'); list.className='mapping-list muted'; return; }
+  list.className='mapping-list';
+  trackedSpools.forEach(spool=>{
+    const row=document.createElement('div'); row.className='mapping-item';
+    const info=document.createElement('div'); info.style.flex='1';
+    const name=document.createElement('div'); name.textContent=spoolName(spool);
+    const code=document.createElement('div'); code.className='mapping-code'; code.textContent=spoolMappings[spool.id]||t('mapping.not_set');
+    info.append(name,code); row.appendChild(info);
+    const edit=document.createElement('button'); edit.className='btn-secondary btn-small'; edit.textContent=t('mapping.edit');
+    edit.onclick=()=>{ select.value=String(spool.id); $('mapBarcode').value=spoolMappings[spool.id]||''; $('mapBarcode').focus(); };
+    row.appendChild(edit);
+    if(spoolMappings[spool.id]){
+      const remove=document.createElement('button'); remove.className='btn-secondary btn-small'; remove.textContent=t('mapping.remove');
+      remove.onclick=async()=>{
+        try{ await jsonResponse(await fetch('/api/spool-barcodes/spool/'+spool.id,{method:'DELETE'})); toast(t('mapping.removed')); await loadMappings(); }
+        catch(e){ toast(e.message||t('mapping.save_failed'),false); }
+      };
+      row.appendChild(remove);
+    }
+    list.appendChild(row);
+  });
+}
+async function loadMappings(){
+  try{
+    const data=await jsonResponse(await fetch('/api/spool-barcodes'));
+    trackedSpools=data.spools||[]; spoolMappings={};
+    (data.mappings||[]).forEach(m=>{ spoolMappings[m.spool_id]=m.barcode; });
+    renderMappings();
+  }catch(e){ $('mapHint').textContent=t('mapping.load_failed')+': '+e.message; $('mapHint').classList.add('err'); }
+}
+$('mapSpool').onchange=()=>{ $('mapBarcode').value=spoolMappings[Number($('mapSpool').value)]||''; };
+$('mapSaveBtn').onclick=async()=>{
+  const spoolId=Number($('mapSpool').value), barcode=$('mapBarcode').value.trim();
+  if(!spoolId || !barcode){ $('mapHint').textContent=t('mapping.choose_spool'); $('mapHint').classList.add('err'); return; }
+  $('mapSaveBtn').disabled=true;
+  try{
+    const data=await jsonResponse(await fetch('/api/spool-barcodes',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({spool_id:spoolId,barcode})}));
+    toast(t('mapping.saved',{spool_id:data.spool_id})); $('mapHint').textContent=''; await loadMappings();
+  }catch(e){ toast(e.message||t('mapping.save_failed'),false); }
+  finally{ $('mapSaveBtn').disabled=false; }
+};
+$('mapBarcode').addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();$('mapSaveBtn').click();} });
+
+// ── Assign mapped spool to printer slot ──
+let printerSlots=[];
+function currentSlot(){
+  const [ams,tray]=($('assignSlot').value||'').split(':').map(Number);
+  return printerSlots.find(s=>s.ams_id===ams&&s.tray_id===tray);
+}
+function showExistingChoice(spool){
+  const box=$('existingChoice');
+  if(!spool || spool.empty){ box.classList.add('hidden'); return; }
+  const name=[spool.brand,spool.material,spool.color_name].filter(Boolean).join(' ');
+  $('existingMessage').textContent=t('assignment.existing_spool',{name:name||'Spool',spool_id:spool.id,remaining:Math.round(spool.remaining_weight)});
+  box.classList.remove('hidden');
+  box.querySelector('input[value="keep"]').checked=true;
+}
+async function loadSlots(){
+  const printerId=Number($('assignPrinter').value), select=$('assignSlot');
+  select.innerHTML=''; select.disabled=true; printerSlots=[]; $('existingChoice').classList.add('hidden');
+  const blank=document.createElement('option'); blank.value=''; blank.textContent=t('assignment.choose_slot'); select.appendChild(blank);
+  if(!printerId) return;
+  try{
+    const data=await jsonResponse(await fetch('/api/printers/'+printerId+'/slots'));
+    printerSlots=data.slots||[];
+    printerSlots.forEach(slot=>{
+      const option=document.createElement('option'); option.value=slot.ams_id+':'+slot.tray_id;
+      option.textContent=slot.label+(slot.assignment?' — '+spoolName(slot.assignment.spool):''); select.appendChild(option);
+    });
+    select.disabled=!printerSlots.length;
+    if(!printerSlots.length) $('assignHint').textContent=t('assignment.no_slots');
+    else if(printerSlots.length===1){ select.value=printerSlots[0].ams_id+':'+printerSlots[0].tray_id; showExistingChoice(printerSlots[0].assignment&&printerSlots[0].assignment.spool); }
+  }catch(e){ $('assignHint').textContent=t('assignment.load_failed')+': '+e.message; $('assignHint').classList.add('err'); }
+}
+async function loadPrinters(){
+  const select=$('assignPrinter'); select.innerHTML='';
+  const blank=document.createElement('option'); blank.value=''; blank.textContent=t('assignment.choose_printer'); select.appendChild(blank);
+  try{
+    const data=await jsonResponse(await fetch('/api/printers'));
+    (data.printers||[]).forEach(printer=>{ const option=document.createElement('option'); option.value=printer.id; option.textContent=printer.name+' (#'+printer.id+')'; select.appendChild(option); });
+  }catch(e){ $('assignHint').textContent=t('assignment.load_failed')+': '+e.message; $('assignHint').classList.add('err'); }
+}
+$('assignPrinter').onchange=loadSlots;
+$('assignSlot').onchange=()=>{ const slot=currentSlot(); showExistingChoice(slot&&slot.assignment&&slot.assignment.spool); };
+$('assignBtn').onclick=async()=>{
+  const printerId=Number($('assignPrinter').value), slot=currentSlot(), barcode=$('assignBarcode').value.trim();
+  if(!printerId||!slot||!barcode){ $('assignHint').textContent=t('assignment.missing_fields'); $('assignHint').classList.add('err'); return; }
+  const body={barcode,printer_id:printerId,ams_id:slot.ams_id,tray_id:slot.tray_id};
+  if(!$('existingChoice').classList.contains('hidden')) body.delete_existing=document.querySelector('input[name="deleteExisting"]:checked').value==='delete';
+  $('assignBtn').disabled=true;
+  try{
+    const response=await fetch('/api/spool-assignment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const data=await response.json().catch(()=>({}));
+    if(response.status===409 && data.confirmation_required){ showExistingChoice(data.existing_spool); $('assignHint').textContent=t('assignment.choose_delete_option'); return; }
+    if(!response.ok||data.ok===false) throw new Error(data.error||('HTTP '+response.status));
+    const message=data.already_assigned?t('assignment.already_assigned'):(data.deleted_existing?t('assignment.deleted_and_assigned',{spool_id:data.spool_id}):t('assignment.assigned',{spool_id:data.spool_id}));
+    toast(message); if(data.warning) toast(data.warning,false);
+    $('assignBarcode').value=''; await Promise.all([loadSlots(),loadMappings()]);
+  }catch(e){ toast(e.message||t('assignment.assign_failed'),false); }
+  finally{ $('assignBtn').disabled=false; }
+};
+$('assignBarcode').addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();$('assignBtn').click();} });
+loadMappings(); loadPrinters();
 $('lookupBtn').onclick = () => {
   const raw = $('manual').value.trim();
   if(!raw) return;

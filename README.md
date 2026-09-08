@@ -25,6 +25,15 @@ It's a small mobile web app:
    only.
 4. **Add** the spool(s) to Bambuddy via its inventory API.
 
+The home page also supports reusable-spool barcodes:
+
+1. Link a unique scanned or typed barcode to any active tracked spool.
+2. Choose a printer by name and select its AMS or external filament slot.
+3. Scan the reusable-spool barcode and assign it. If the slot's previous
+   tracked spool still contains filament, an inline choice defaults to keeping
+   that spool in inventory; choosing delete also removes its saved barcode.
+   Empty previous spools are removed automatically.
+
 The lookup also **learns**: whatever you confirm is remembered for that code
 *and* every code cross-referenced alongside it, so a later scan of any of
 them — the same barcode, a sibling package size, or the manufacturer SKU —
@@ -95,7 +104,8 @@ To enable the camera, serve the app over HTTPS, e.g.:
 ### Run with Docker (in a stack)
 
 A `Dockerfile` and `docker-compose.yml` are included. It runs under **gunicorn**
-and persists its caches (`barcode_cache.json`, `ofd_index.json`) to a volume.
+and persists its caches and reusable-spool map (`barcode_cache.json`,
+`spool_barcodes.json`, `ofd_index.json`) to a volume.
 
 ```bash
 cp .env.example .env      # then edit .env with your BAMBUDDY_URL + API key
@@ -130,8 +140,9 @@ For the **camera** and **PWA install** you still need HTTPS — route this
 container through the same reverse proxy (Traefik / nginx / Caddy / Cloudflare
 Tunnel) you use for Bambuddy, with its own hostname.
 
-Docker-specific env vars: `OFD_CACHE_FILE` and `BARCODE_CACHE_FILE` default to
-`/data/...` in the image so the caches land on the mounted volume.
+Docker-specific cache/map variables (`OFD_CACHE_FILE`, `BARCODE_CACHE_FILE`,
+`SPOOL_BARCODE_FILE`, and `SPOOLMANDB_COMMUNITY_CACHE_FILE`) default to
+`/data/...` in the image so the data lands on the mounted volume.
 
 ### Configuration (environment variables)
 
@@ -141,6 +152,7 @@ Docker-specific env vars: `OFD_CACHE_FILE` and `BARCODE_CACHE_FILE` default to
 | `BAMBUDDY_API_KEY` | — | Bambuddy API key (**required**, needs *Manage Inventory*) |
 | `DEFAULT_LABEL_WEIGHT` | `1000` | Net grams assumed when unknown |
 | `BARCODE_CACHE_FILE` | `barcode_cache.json` | Where learned lookups are stored |
+| `SPOOL_BARCODE_FILE` | `spool_barcodes.json` | Persistent reusable barcode → Bambuddy spool ID map |
 | `OFD_CACHE_FILE` | `ofd_index.json` | Where the OFD index is cached |
 | `SPOOLMANDB_COMMUNITY_CACHE_FILE` | `spoolmandb_community_index.json` | Where the SpoolmanDB-Community index is cached |
 | `HOST` / `PORT` | `0.0.0.0` / `8088` | Server bind address |
@@ -157,6 +169,12 @@ required; the form also sends brand, subtype, colour name + RGBA, net weight,
 storage location, category, nozzle temps, cost/kg and a note where available.
 Each created spool is tagged `data_origin = "barcode-scan"`.
 
+Reusable-spool assignment uses Bambuddy's
+`POST /api/v1/inventory/assignments` endpoint. Printer names come from
+`GET /api/v1/printers/`, and the UI exposes every reported AMS or external
+slot because the assignment schema requires `printer_id`, `ams_id`, and
+`tray_id`.
+
 ## Project layout
 
 | File | Purpose |
@@ -169,7 +187,8 @@ Each created spool is tagged `data_origin = "barcode-scan"`.
 | `static/manifest.webmanifest`, `static/sw.js`, `static/icons/` | PWA manifest, service worker, and app icons |
 
 Not in the repo (gitignored): `run.sh` (your secrets), `barcode_cache.json`
-(your learned lookups), `ofd_index.json` (downloaded database cache).
+(your learned lookups), `spool_barcodes.json` (your reusable-spool mappings),
+and the downloaded database indexes.
 
 ---
 

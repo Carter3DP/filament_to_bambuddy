@@ -122,6 +122,49 @@ EN = {
         "failed": "Failed",
         "request_failed": "Request failed",
     },
+    "mapping": {
+        "title": "Reusable spool barcodes",
+        "description": "Link a unique reusable-spool barcode to each tracked Bambuddy spool.",
+        "spool": "Tracked spool",
+        "barcode": "Reusable spool barcode",
+        "barcode_placeholder": "Scan or enter the reusable spool barcode",
+        "scan": "📷 Scan barcode",
+        "save": "Save barcode",
+        "saved": "Barcode saved for spool #{spool_id}",
+        "removed": "Barcode removed",
+        "load_failed": "Could not load tracked spools",
+        "save_failed": "Could not save barcode",
+        "choose_spool": "Choose a tracked spool",
+        "none": "No active tracked spools found",
+        "not_set": "Not set",
+        "edit": "Edit",
+        "remove": "Remove",
+        "unknown_spool": "Unknown spool",
+        "unknown_spool": "Unknown spool",
+    },
+    "assignment": {
+        "title": "Assign a spool to a printer",
+        "description": "Choose the printer and filament slot, then scan the reusable spool barcode.",
+        "printer": "Printer",
+        "slot": "Filament slot",
+        "barcode": "Reusable spool barcode",
+        "barcode_placeholder": "Scan or enter the reusable spool barcode",
+        "scan": "📷 Scan barcode",
+        "assign": "Assign spool",
+        "choose_printer": "Choose a printer",
+        "choose_slot": "Choose a slot",
+        "no_slots": "No slots were reported for this printer",
+        "load_failed": "Could not load printers or slots",
+        "missing_fields": "Choose a printer and slot, then scan or enter a barcode.",
+        "existing_spool": "{name} (#{spool_id}) is currently assigned here with {remaining}g remaining. Delete it from Bambuddy?",
+        "keep_existing": "No — keep it in inventory (default)",
+        "delete_existing": "Yes — permanently delete it and remove its barcode mapping",
+        "assigned": "Spool #{spool_id} assigned",
+        "deleted_and_assigned": "Old spool deleted and spool #{spool_id} assigned",
+        "assign_failed": "Could not assign spool",
+        "already_assigned": "That spool is already assigned to this slot",
+        "choose_delete_option": "Choose whether to keep or delete the current spool, then press Assign again.",
+    },
 }
 
 DE = {
@@ -1159,6 +1202,22 @@ TR = {
         "request_failed": "İstek başarısız oldu",
     },
 }
+
+# The reusable-spool workflow is new and currently ships with English copy.
+# Materialize those keys in every locale so all dictionaries remain
+# structurally complete while the new copy is translated incrementally.
+for _translations in (DE, ES, FR, JA, IT, KO, PT_BR, ZH_CN, ZH_TW, TR):
+    _translations.setdefault("mapping", dict(EN["mapping"]))
+    _translations.setdefault("assignment", dict(EN["assignment"]))
+
+
+# The reusable-spool workflow is new and currently ships with English copy.
+# Materialize those keys in every locale so all dictionaries stay
+# structurally complete while the new copy is translated incrementally.
+for _translations in (DE, ES, FR, JA, IT, KO, PT_BR, ZH_CN, ZH_TW, TR):
+    _translations.setdefault("mapping", dict(EN["mapping"]))
+    _translations.setdefault("assignment", dict(EN["assignment"]))
+
 
 # All available translations. Language codes match Bambuddy's own supported
 # set (frontend/src/i18n/index.ts's SUPPORTED_LNGS) but are kept fully

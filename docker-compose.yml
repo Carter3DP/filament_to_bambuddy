@@ -14,7 +14,7 @@ services:
     env_file:
       - .env
     volumes:
-      - filament_data:/data   # persists barcode_cache.json + ofd_index.json
+      - filament_data:/data   # persists barcode/spool mappings + database indexes
 
 volumes:
   filament_data:

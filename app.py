@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import subprocess
+import threading
 from pathlib import Path
 
 import requests
@@ -48,6 +49,7 @@ BAMBUDDY_API_KEY = os.getenv("BAMBUDDY_API_KEY", "")
 
 DEFAULT_LABEL_WEIGHT = int(os.getenv("DEFAULT_LABEL_WEIGHT", "1000"))
 CACHE_FILE = Path(os.getenv("BARCODE_CACHE_FILE", "barcode_cache.json"))
+SPOOL_BARCODE_FILE = Path(os.getenv("SPOOL_BARCODE_FILE", "spool_barcodes.json"))
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8088"))
@@ -223,6 +225,8 @@ APP_VERSION = _get_version()
 
 app = Flask(__name__)
 
+_spool_barcode_lock = threading.Lock()
+
 
 # ── Barcode cache (learns from your confirmed entries) ────────────────────────
 
@@ -237,6 +241,71 @@ def load_cache() -> dict:
 
 def save_cache(cache: dict):
     CACHE_FILE.write_text(json.dumps(cache, indent=2))
+
+
+# ── Reusable-spool barcode map ───────────────────────────────────────────────
+
+def load_spool_barcodes() -> dict[str, int]:
+    """Load the local reusable-barcode -> Bambuddy spool-id map."""
+    if not SPOOL_BARCODE_FILE.exists():
+        return {}
+    try:
+        data = json.loads(SPOOL_BARCODE_FILE.read_text())
+        if not isinstance(data, dict):
+            return {}
+        return {
+            str(barcode): int(spool_id)
+            for barcode, spool_id in data.items()
+            if str(barcode).strip()
+        }
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        log.warning("could not read reusable-spool barcode map", exc_info=True)
+        return {}
+
+
+def save_spool_barcodes(mapping: dict[str, int]):
+    """Atomically persist the reusable-spool barcode map."""
+    SPOOL_BARCODE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = SPOOL_BARCODE_FILE.with_name(f".{SPOOL_BARCODE_FILE.name}.tmp")
+    tmp.write_text(json.dumps(mapping, indent=2, sort_keys=True) + "\n")
+    tmp.replace(SPOOL_BARCODE_FILE)
+
+
+def _bambuddy_headers(*, json_body: bool = False) -> dict[str, str]:
+    headers = {"X-API-Key": BAMBUDDY_API_KEY, "Accept": "application/json"}
+    if json_body:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
+def _bambuddy_error(response: requests.Response) -> str:
+    try:
+        body = response.json()
+        if isinstance(body, dict):
+            detail = body.get("detail") or body.get("error")
+            if detail:
+                return str(detail)
+    except (ValueError, TypeError):
+        pass
+    return response.text[:200] or f"HTTP {response.status_code}"
+
+
+def _spool_summary(spool: dict | None) -> dict | None:
+    if not spool:
+        return None
+    label_weight = float(spool.get("label_weight") or 0)
+    weight_used = float(spool.get("weight_used") or 0)
+    remaining = max(0.0, label_weight - weight_used)
+    return {
+        "id": spool.get("id"),
+        "material": spool.get("material") or "",
+        "brand": spool.get("brand") or "",
+        "color_name": spool.get("color_name") or "",
+        "label_weight": label_weight,
+        "weight_used": weight_used,
+        "remaining_weight": remaining,
+        "empty": remaining <= 0,
+    }
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -271,6 +340,7 @@ def index():
             supported_langs=i18n.SUPPORTED_LANGS,
             t=translator.t,
             translations=i18n.TRANSLATIONS.get(lang, i18n.TRANSLATIONS[i18n.DEFAULT_LANG]),
+            translations_en=i18n.TRANSLATIONS[i18n.DEFAULT_LANG],
         )
     )
     # Remember an explicit ?lang= choice so it sticks on the next visit
@@ -425,6 +495,259 @@ def ofd_refresh():
         brands=brands,
         spoolmandb_community_barcodes=smdb_codes,
     )
+
+
+@app.get("/api/spool-barcodes")
+def spool_barcodes():
+    """Return active Bambuddy spools alongside their reusable barcode mapping."""
+    if not BAMBUDDY_API_KEY:
+        return jsonify(ok=False, error="BAMBUDDY_API_KEY not set on the server"), 400
+    try:
+        response = requests.get(
+            f"{BAMBUDDY_URL}/api/v1/inventory/spools",
+            headers=_bambuddy_headers(),
+            params={"include_archived": "false"},
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+    if not response.ok:
+        return jsonify(ok=False, error=_bambuddy_error(response)), response.status_code
+
+    raw_spools = response.json()
+    if not isinstance(raw_spools, list):
+        return jsonify(ok=False, error="Unexpected Bambuddy spool response"), 502
+    spools = [_spool_summary(spool) for spool in raw_spools]
+    mapping = load_spool_barcodes()
+    active_ids = {spool["id"] for spool in spools}
+    # Stale keys are not silently removed here: they may become valid again if
+    # Bambuddy was temporarily restored from a backup. The UI marks them by
+    # omission because only active tracked spools are editable.
+    return jsonify(ok=True, spools=spools,
+                   mappings=[{"barcode": code, "spool_id": sid}
+                             for code, sid in mapping.items() if sid in active_ids])
+
+
+@app.put("/api/spool-barcodes")
+def set_spool_barcode():
+    """Bind one unique reusable barcode to one active Bambuddy spool."""
+    if not BAMBUDDY_API_KEY:
+        return jsonify(ok=False, error="BAMBUDDY_API_KEY not set on the server"), 400
+    body = request.get_json(force=True, silent=True) or {}
+    barcode = str(body.get("barcode") or "").strip()
+    try:
+        spool_id = int(body.get("spool_id"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="A valid spool_id is required"), 400
+    if not barcode or len(barcode) > 128:
+        return jsonify(ok=False, error="Barcode must contain 1 to 128 characters"), 400
+
+    try:
+        response = requests.get(
+            f"{BAMBUDDY_URL}/api/v1/inventory/spools/{spool_id}",
+            headers=_bambuddy_headers(), timeout=15,
+        )
+    except requests.RequestException as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+    if not response.ok:
+        return jsonify(ok=False, error=_bambuddy_error(response)), response.status_code
+    if (response.json() or {}).get("archived_at"):
+        return jsonify(ok=False, error="Cannot map a barcode to an archived spool"), 400
+
+    with _spool_barcode_lock:
+        mapping = load_spool_barcodes()
+        owner = mapping.get(barcode)
+        if owner is not None and owner != spool_id:
+            return jsonify(ok=False, error=f"That barcode is already assigned to spool #{owner}"), 409
+        replaced = [code for code, sid in mapping.items() if sid == spool_id and code != barcode]
+        for code in replaced:
+            del mapping[code]
+        mapping[barcode] = spool_id
+        save_spool_barcodes(mapping)
+    return jsonify(ok=True, barcode=barcode, spool_id=spool_id, replaced=replaced)
+
+
+@app.delete("/api/spool-barcodes/spool/<int:spool_id>")
+def delete_spool_barcode(spool_id):
+    """Remove every reusable barcode that points at a spool."""
+    with _spool_barcode_lock:
+        mapping = load_spool_barcodes()
+        removed = [code for code, sid in mapping.items() if sid == spool_id]
+        for code in removed:
+            del mapping[code]
+        if removed:
+            save_spool_barcodes(mapping)
+    return jsonify(ok=True, removed=removed)
+
+
+@app.get("/api/printers")
+def printers():
+    """Proxy Bambuddy's printer list without exposing its API key to the browser."""
+    if not BAMBUDDY_API_KEY:
+        return jsonify(ok=False, error="BAMBUDDY_API_KEY not set on the server"), 400
+    try:
+        response = requests.get(
+            f"{BAMBUDDY_URL}/api/v1/printers/",
+            headers=_bambuddy_headers(), timeout=15,
+        )
+    except requests.RequestException as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+    if not response.ok:
+        return jsonify(ok=False, error=_bambuddy_error(response)), response.status_code
+    return jsonify(ok=True, printers=[
+        {"id": printer.get("id"), "name": printer.get("name") or f"Printer {printer.get('id')}"}
+        for printer in response.json()
+    ])
+
+
+def _slot_label(ams_id: int, tray_id: int, ams_label: str | None = None) -> str:
+    if ams_id == 255:
+        return "External spool" if tray_id == 0 else f"External spool {tray_id + 1}"
+    prefix = ams_label or (f"AMS {ams_id + 1}" if ams_id < 128 else f"AMS HT {ams_id - 127}")
+    return f"{prefix} · Slot {tray_id + 1}"
+
+
+@app.get("/api/printers/<int:printer_id>/slots")
+def printer_slots(printer_id):
+    """Return selectable AMS/external slots and any current assignments."""
+    if not BAMBUDDY_API_KEY:
+        return jsonify(ok=False, error="BAMBUDDY_API_KEY not set on the server"), 400
+    try:
+        status_response = requests.get(
+            f"{BAMBUDDY_URL}/api/v1/printers/{printer_id}/status",
+            headers=_bambuddy_headers(), timeout=15,
+        )
+        assignments_response = requests.get(
+            f"{BAMBUDDY_URL}/api/v1/inventory/assignments",
+            headers=_bambuddy_headers(), params={"printer_id": printer_id}, timeout=15,
+        )
+    except requests.RequestException as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+    if not status_response.ok:
+        return jsonify(ok=False, error=_bambuddy_error(status_response)), status_response.status_code
+    if not assignments_response.ok:
+        return jsonify(ok=False, error=_bambuddy_error(assignments_response)), assignments_response.status_code
+
+    assignments = assignments_response.json() if isinstance(assignments_response.json(), list) else []
+    assignment_map = {(a.get("ams_id"), a.get("tray_id")): a for a in assignments}
+    status = status_response.json() or {}
+    slots: dict[tuple[int, int], dict] = {}
+
+    for unit in status.get("ams") or []:
+        ams_id = int(unit.get("id", 0))
+        for tray in unit.get("tray") or []:
+            tray_id = int(tray.get("id", 0))
+            slots[(ams_id, tray_id)] = {
+                "ams_id": ams_id, "tray_id": tray_id,
+                "label": _slot_label(ams_id, tray_id),
+            }
+    for tray in status.get("vt_tray") or []:
+        global_id = int(tray.get("id", 254))
+        tray_id = max(0, global_id - 254)
+        slots[(255, tray_id)] = {
+            "ams_id": 255, "tray_id": tray_id,
+            "label": _slot_label(255, tray_id),
+        }
+
+    # Offline printers may not expose live slot data. Keep assigned slots
+    # selectable so the user can still replace their database assignment.
+    for key, assignment in assignment_map.items():
+        if key not in slots:
+            slots[key] = {
+                "ams_id": key[0], "tray_id": key[1],
+                "label": _slot_label(key[0], key[1], assignment.get("ams_label")),
+            }
+
+    for key, slot in slots.items():
+        assignment = assignment_map.get(key)
+        if assignment:
+            slot["label"] = _slot_label(key[0], key[1], assignment.get("ams_label"))
+            slot["assignment"] = {
+                "spool_id": assignment.get("spool_id"),
+                "spool": _spool_summary(assignment.get("spool")),
+            }
+    ordered = sorted(slots.values(), key=lambda item: (item["ams_id"] == 255, item["ams_id"], item["tray_id"]))
+    return jsonify(ok=True, connected=bool(status.get("connected")), slots=ordered)
+
+
+@app.post("/api/spool-assignment")
+def assign_spool_by_barcode():
+    """Resolve a reusable barcode and assign its spool to a Bambuddy slot."""
+    if not BAMBUDDY_API_KEY:
+        return jsonify(ok=False, error="BAMBUDDY_API_KEY not set on the server"), 400
+    body = request.get_json(force=True, silent=True) or {}
+    barcode = str(body.get("barcode") or "").strip()
+    try:
+        printer_id = int(body.get("printer_id"))
+        ams_id = int(body.get("ams_id"))
+        tray_id = int(body.get("tray_id"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Printer and slot are required"), 400
+    if not barcode:
+        return jsonify(ok=False, error="Barcode is required"), 400
+
+    mapping = load_spool_barcodes()
+    spool_id = mapping.get(barcode)
+    if spool_id is None:
+        return jsonify(ok=False, error="This barcode is not linked to a tracked spool"), 404
+
+    try:
+        assignments_response = requests.get(
+            f"{BAMBUDDY_URL}/api/v1/inventory/assignments",
+            headers=_bambuddy_headers(), params={"printer_id": printer_id}, timeout=15,
+        )
+    except requests.RequestException as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+    if not assignments_response.ok:
+        return jsonify(ok=False, error=_bambuddy_error(assignments_response)), assignments_response.status_code
+    assignments = assignments_response.json() if isinstance(assignments_response.json(), list) else []
+    existing = next((a for a in assignments
+                     if a.get("ams_id") == ams_id and a.get("tray_id") == tray_id), None)
+    old_spool = _spool_summary(existing.get("spool")) if existing else None
+    if existing and existing.get("spool_id") == spool_id:
+        return jsonify(ok=True, already_assigned=True, spool_id=spool_id,
+                       assignment=existing, deleted_existing=False)
+
+    delete_choice = body.get("delete_existing")
+    if old_spool and not old_spool["empty"] and delete_choice is None:
+        return jsonify(ok=False, confirmation_required=True, existing_spool=old_spool), 409
+    delete_old = bool(old_spool and (old_spool["empty"] or delete_choice is True))
+
+    payload = {"spool_id": spool_id, "printer_id": printer_id,
+               "ams_id": ams_id, "tray_id": tray_id}
+    try:
+        assignment_response = requests.post(
+            f"{BAMBUDDY_URL}/api/v1/inventory/assignments",
+            headers=_bambuddy_headers(json_body=True), json=payload, timeout=30,
+        )
+    except requests.RequestException as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+    if not assignment_response.ok:
+        return jsonify(ok=False, error=_bambuddy_error(assignment_response)), assignment_response.status_code
+
+    deleted_existing = False
+    warning = None
+    if delete_old:
+        old_spool_id = int(old_spool["id"])
+        try:
+            delete_response = requests.delete(
+                f"{BAMBUDDY_URL}/api/v1/inventory/spools/{old_spool_id}",
+                headers=_bambuddy_headers(), timeout=30,
+            )
+            if delete_response.ok:
+                deleted_existing = True
+                with _spool_barcode_lock:
+                    latest = load_spool_barcodes()
+                    for code in [code for code, sid in latest.items() if sid == old_spool_id]:
+                        del latest[code]
+                    save_spool_barcodes(latest)
+            else:
+                warning = f"Spool assigned, but old spool could not be deleted: {_bambuddy_error(delete_response)}"
+        except requests.RequestException as exc:
+            warning = f"Spool assigned, but old spool could not be deleted: {exc}"
+
+    return jsonify(ok=True, spool_id=spool_id, assignment=assignment_response.json(),
+                   deleted_existing=deleted_existing, warning=warning)
 
 
 @app.get("/api/health")
