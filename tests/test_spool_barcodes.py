@@ -56,6 +56,17 @@ def test_rejects_barcode_already_owned_by_another_spool(client):
     assert "spool #3" in result.get_json()["error"]
 
 
+def test_mapping_list_includes_remaining_filament_weight(client):
+    with patch(
+        "app.requests.get",
+        return_value=response(payload=[spool(12, label_weight=1000, weight_used=275)]),
+    ):
+        result = client.get("/api/spool-barcodes")
+
+    assert result.status_code == 200
+    assert result.get_json()["spools"][0]["remaining_weight"] == 725
+
+
 def test_printer_slots_include_ams_and_external_assignments(client):
     status = {
         "connected": True,
