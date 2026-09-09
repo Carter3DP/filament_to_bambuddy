@@ -181,6 +181,7 @@ EN = {
         "printer_barcode_placeholder": "Scan or enter the printer barcode",
         "scan": "📷 Scan barcode",
         "assign": "Assign spool",
+        "assigning": "Assigning spool…",
         "choose_printer": "Choose a printer",
         "choose_slot": "Choose a slot",
         "no_slots": "No slots were reported for this printer",

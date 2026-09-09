@@ -850,10 +850,11 @@ $('printerMapSaveBtn').onclick=async()=>{
 $('printerMapBarcode').addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();$('printerMapSaveBtn').click();} });
 
 // ── Assign a spool using either a spool barcode or printer barcode ──
-let printerSlots=[], resolvedPrinterTarget=null, assignmentResolveTimer=null;
+let printerSlots=[], resolvedPrinterTarget=null, assignmentResolveTimer=null, assignmentResolvePromise=null;
 function currentSlot(){
   const [ams,tray]=($('assignSlot').value||'').split(':').map(Number);
-  return printerSlots.find(s=>s.ams_id===ams&&s.tray_id===tray);
+  if(!Number.isInteger(ams)||!Number.isInteger(tray)) return null;
+  return printerSlots.find(s=>s.ams_id===ams&&s.tray_id===tray)||{ams_id:ams,tray_id:tray};
 }
 function showExistingChoice(spool){
   const box=$('existingChoice');
@@ -884,7 +885,19 @@ async function loadSlots(fixedTarget=null){
       select.value=fixedTarget.ams_id+':'+fixedTarget.tray_id;
       const slot=currentSlot(); showExistingChoice(slot&&slot.assignment&&slot.assignment.spool);
     }else if(printerSlots.length===1){ select.value=printerSlots[0].ams_id+':'+printerSlots[0].tray_id; showExistingChoice(printerSlots[0].assignment&&printerSlots[0].assignment.spool); }
-  }catch(e){ $('assignHint').textContent=t('assignment.load_failed')+': '+e.message; $('assignHint').classList.add('err'); }
+  }catch(e){
+    // A fixed barcode target is still assignable if live printer status is
+    // temporarily unavailable. Bambuddy's POST endpoint remains the source
+    // of truth, and will return the real error if the target is invalid.
+    if(fixedTarget && fixedTarget.ams_id!=null){
+      const slot={ams_id:fixedTarget.ams_id,tray_id:fixedTarget.tray_id,label:fixedTarget.slot_label||('Slot '+(fixedTarget.tray_id+1))};
+      printerSlots=[slot];
+      const option=document.createElement('option'); option.value=slot.ams_id+':'+slot.tray_id; option.textContent=slot.label; select.appendChild(option);
+      select.value=option.value; select.disabled=true;
+      return;
+    }
+    $('assignHint').textContent=t('assignment.load_failed')+': '+e.message; $('assignHint').classList.add('err');
+  }
 }
 async function loadPrinters(){
   try{
@@ -904,13 +917,23 @@ async function resolveAssignmentPrinter(){
   const barcode=$('assignBarcode').value.trim();
   resolvedPrinterTarget=null; $('assignPrinter').value=''; $('assignSlot').innerHTML=''; $('assignSlot').disabled=true;
   if(!barcode) return;
-  try{
-    const data=await jsonResponse(await fetch('/api/printer-barcodes/resolve?barcode='+encodeURIComponent(barcode)));
-    if($('assignBarcode').value.trim()!==barcode || $('assignMode').value!=='printer') return;
-    resolvedPrinterTarget=data.target; $('assignPrinter').value=String(data.target.printer_id);
-    await loadSlots(data.target);
-    $('assignHint').textContent=printerTargetName(data.target); $('assignHint').classList.remove('err');
-  }catch(e){ $('assignHint').textContent=e.message||t('assignment.printer_not_mapped'); $('assignHint').classList.add('err'); }
+  const work=(async()=>{
+    try{
+      const data=await jsonResponse(await fetch('/api/printer-barcodes/resolve?barcode='+encodeURIComponent(barcode)));
+      if($('assignBarcode').value.trim()!==barcode || $('assignMode').value!=='printer') return;
+      $('assignPrinter').value=String(data.target.printer_id);
+      await loadSlots(data.target);
+      if($('assignBarcode').value.trim()!==barcode || $('assignMode').value!=='printer') return;
+      resolvedPrinterTarget=data.target;
+      $('assignHint').textContent=printerTargetName(data.target); $('assignHint').classList.remove('err');
+    }catch(e){
+      resolvedPrinterTarget=null;
+      $('assignHint').textContent=e.message||t('assignment.printer_not_mapped'); $('assignHint').classList.add('err');
+    }
+  })();
+  assignmentResolvePromise=work;
+  try{ await work; }
+  finally{ if(assignmentResolvePromise===work) assignmentResolvePromise=null; }
 }
 function setAssignmentMode(){
   const printerMode=$('assignMode').value==='printer';
@@ -928,6 +951,7 @@ $('assignPrinter').onchange=()=>{ if($('assignMode').value==='spool') loadSlots(
 $('assignSlot').onchange=()=>{ const slot=currentSlot(); showExistingChoice(slot&&slot.assignment&&slot.assignment.spool); };
 $('assignBtn').onclick=async()=>{
   const mode=$('assignMode').value, barcode=$('assignBarcode').value.trim();
+  if(mode==='printer' && assignmentResolvePromise) await assignmentResolvePromise;
   if(mode==='printer' && !resolvedPrinterTarget) await resolveAssignmentPrinter();
   const printerId=Number($('assignPrinter').value), slot=currentSlot(), spoolId=Number($('assignSpool').value);
   if(!printerId||!slot||!barcode||(mode==='printer'&&!spoolId)){
@@ -937,20 +961,24 @@ $('assignBtn').onclick=async()=>{
   if(mode==='printer') body.spool_id=spoolId;
   if(!$('existingChoice').classList.contains('hidden')) body.delete_existing=document.querySelector('input[name="deleteExisting"]:checked').value==='delete';
   $('assignBtn').disabled=true;
+  $('assignHint').textContent=t('assignment.assigning'); $('assignHint').classList.remove('err');
   try{
     const response=await fetch('/api/spool-assignment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const data=await response.json().catch(()=>({}));
     if(response.status===409 && data.confirmation_required){ showExistingChoice(data.existing_spool); $('assignHint').textContent=t('assignment.choose_delete_option'); return; }
     if(!response.ok||data.ok===false) throw new Error(data.error||('HTTP '+response.status));
     const message=data.already_assigned?t('assignment.already_assigned'):(data.deleted_existing?t('assignment.deleted_and_assigned',{spool_id:data.spool_id}):t('assignment.assigned',{spool_id:data.spool_id}));
-    toast(message); if(data.warning) toast(data.warning,false);
+    $('assignHint').textContent=message; $('assignHint').classList.remove('err'); toast(message); if(data.warning) toast(data.warning,false);
     $('assignBarcode').value=''; resolvedPrinterTarget=null; $('existingChoice').classList.add('hidden');
     if(mode==='printer'){
       $('assignPrinter').value=''; $('assignSlot').innerHTML=''; $('assignSlot').disabled=true; await loadMappings();
     }else{
       await Promise.all([loadSlots(),loadMappings()]);
     }
-  }catch(e){ toast(e.message||t('assignment.assign_failed'),false); }
+  }catch(e){
+    const message=e.message||t('assignment.assign_failed');
+    $('assignHint').textContent=message; $('assignHint').classList.add('err'); toast(message,false);
+  }
   finally{ $('assignBtn').disabled=false; }
 };
 $('assignBarcode').addEventListener('input',()=>{
