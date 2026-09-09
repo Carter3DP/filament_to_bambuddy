@@ -601,8 +601,9 @@ function reusableScanValue(result){
   }
   const gtin=extractGtinFromScan(raw);
   if(gtin && isValidUpcEanBarcode(gtin)) return gtin;
-  // Reusable spool labels are user-defined, so Code 128 and QR values do not
-  // need to be retail GTINs. Preserve the exact decoded value as the key.
+  // Reusable spool labels are user-defined, so Code 39, Code 128, and QR
+  // values do not need to be retail GTINs. Preserve the exact decoded value
+  // as the key.
   return raw;
 }
 async function startAccessoryScan(prefix, inputId){
@@ -617,7 +618,7 @@ async function startAccessoryScan(prefix, inputId){
     if(ZXingBrowser.BarcodeFormat){
       const F=ZXingBrowser.BarcodeFormat;
       accessoryReader.hints.set(3,true);
-      accessoryReader.possibleFormats=[F.UPC_A,F.UPC_E,F.EAN_13,F.EAN_8,F.QR_CODE,F.CODE_128];
+      accessoryReader.possibleFormats=[F.UPC_A,F.UPC_E,F.EAN_13,F.EAN_8,F.QR_CODE,F.CODE_39,F.CODE_128];
     }
     $(prefix+'VideoWrap').classList.remove('hidden');
     $(prefix+'ScanBtn').classList.add('hidden');
