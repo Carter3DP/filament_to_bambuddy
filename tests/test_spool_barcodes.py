@@ -1,6 +1,7 @@
 """Reusable-spool barcode mapping and assignment route tests."""
 
 import json
+import re
 from unittest.mock import Mock, patch
 
 import pytest
@@ -65,6 +66,18 @@ def test_mapping_list_includes_remaining_filament_weight(client):
 
     assert result.status_code == 200
     assert result.get_json()["spools"][0]["remaining_weight"] == 725
+
+
+def test_only_reusable_spool_scanners_enable_code_39(client):
+    html = client.get("/").get_data(as_text=True)
+
+    new_spool_formats = re.search(r"\breader\.possibleFormats\s*=\s*\[([^]]+)]", html)
+    reusable_formats = re.search(r"accessoryReader\.possibleFormats\s*=\s*\[([^]]+)]", html)
+
+    assert new_spool_formats
+    assert reusable_formats
+    assert "F.CODE_39" not in new_spool_formats.group(1)
+    assert "F.CODE_39" in reusable_formats.group(1)
 
 
 def test_printer_slots_include_ams_and_external_assignments(client):
