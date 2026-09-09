@@ -41,7 +41,7 @@
     text-decoration:none;font-size:13px;white-space:nowrap;text-align:center;overflow:hidden;text-overflow:ellipsis}
   nav a.active{color:#0a0a0a;background:var(--green);font-weight:600}
   @media (min-width:620px){
-    nav{grid-template-columns:repeat(4,max-content);justify-content:center}
+    nav{grid-template-columns:repeat(5,max-content);justify-content:center}
   }
   .cube{width:26px;height:26px;flex:0 0 auto}
   main{padding:16px;max-width:560px;margin:0 auto;
@@ -98,10 +98,14 @@
   .choice{display:flex;align-items:flex-start;gap:8px;padding:9px;border:1px solid #4a4a4a;border-radius:9px;margin-top:8px;color:var(--fg);font-size:14px}
   .choice input{width:auto;margin:2px 0 0;accent-color:var(--green)}
   .warning{border-left:3px solid #e0a800;padding:8px 10px;margin-top:10px;background:#392f12;border-radius:6px}
+  .assignment-group{margin-top:14px}
+  .assignment-printer{font-weight:600;padding:8px 0;border-bottom:1px solid #555}
+  .assignment-slot{font-size:13px;color:var(--green-light);margin-bottom:3px}
   body:not([data-page="add"]) .page-add,
   body:not([data-page="spools"]) .page-spools,
   body:not([data-page="printers"]) .page-printers,
-  body:not([data-page="assign"]) .page-assign{display:none}
+  body:not([data-page="assign"]) .page-assign,
+  body:not([data-page="assignments"]) .page-assignments{display:none}
 </style>
 </head>
 <body data-page="{{ page }}">
@@ -119,6 +123,7 @@
   <a href="/spool-barcodes"{% if page == 'spools' %} class="active"{% endif %}>{{ t('nav.spools') }}</a>
   <a href="/printer-barcodes"{% if page == 'printers' %} class="active"{% endif %}>{{ t('nav.printers') }}</a>
   <a href="/assign-spool"{% if page == 'assign' %} class="active"{% endif %}>{{ t('nav.assign') }}</a>
+  <a href="/assignments"{% if page == 'assignments' %} class="active"{% endif %}>{{ t('nav.assignments') }}</a>
 </nav>
 
 <main>
@@ -202,6 +207,17 @@
       <label class="choice"><input type="radio" name="deleteExisting" value="delete"><span>{{ t('assignment.delete_existing') }}</span></label>
     </div>
     <button id="assignBtn" class="btn-primary" style="margin-top:12px">{{ t('assignment.assign') }}</button>
+  </div>
+
+  <!-- Current Bambuddy filament -> printer assignments -->
+  <div class="card page-assignments" id="currentAssignmentsCard">
+    <div style="display:flex;align-items:center;gap:10px">
+      <div class="section-title" style="flex:1">{{ t('assignments.title') }}</div>
+      <button id="refreshAssignmentsBtn" class="btn-secondary btn-small">{{ t('assignments.refresh') }}</button>
+    </div>
+    <div class="muted">{{ t('assignments.description') }}</div>
+    <div id="currentAssignmentsHint" class="hint"></div>
+    <div id="currentAssignmentsList"></div>
   </div>
 
   <!-- Scan -->
@@ -994,6 +1010,57 @@ if(ACTIVE_PAGE==='spools' || ACTIVE_PAGE==='assign') loadMappings();
 if(ACTIVE_PAGE==='printers' || ACTIVE_PAGE==='assign') loadPrinters().then(()=>{
   if(ACTIVE_PAGE==='printers') loadPrinterMappings();
 });
+
+// ── Current filament-to-printer assignments ──
+function assignmentSpoolName(assignment){
+  const spool=assignment.spool;
+  if(!spool) return t('assignments.unknown_spool',{spool_id:assignment.spool_id});
+  const details=[spool.brand,spool.material,spool.color_name].filter(Boolean).join(' ');
+  return details ? details+' (#'+assignment.spool_id+')' : t('assignments.unknown_spool',{spool_id:assignment.spool_id});
+}
+function renderCurrentAssignments(assignments){
+  const list=$('currentAssignmentsList'); list.innerHTML='';
+  if(!assignments.length){
+    list.className='muted'; list.style.marginTop='12px'; list.textContent=t('assignments.none'); return;
+  }
+  list.className=''; list.style.marginTop='';
+  let group=null, groupKey=null;
+  assignments.forEach(assignment=>{
+    const key=String(assignment.printer_id);
+    if(key!==groupKey){
+      groupKey=key; group=document.createElement('div'); group.className='assignment-group';
+      const heading=document.createElement('div'); heading.className='assignment-printer';
+      heading.textContent=(assignment.printer_name||('Printer '+assignment.printer_id))+' (#'+assignment.printer_id+')';
+      group.appendChild(heading); list.appendChild(group);
+    }
+    const row=document.createElement('div'); row.className='mapping-item';
+    const info=document.createElement('div'); info.style.flex='1';
+    const slot=document.createElement('div'); slot.className='assignment-slot'; slot.textContent=assignment.slot_label;
+    const name=document.createElement('div'); name.textContent=assignmentSpoolName(assignment);
+    info.append(slot,name);
+    if(assignment.spool){
+      const weight=document.createElement('div'); weight.className='muted';
+      weight.textContent=t('assignments.remaining',{kg:(assignment.spool.remaining_weight/1000).toFixed(3)});
+      info.appendChild(weight);
+    }
+    if(assignment.pending_config){
+      const pending=document.createElement('div'); pending.className='hint'; pending.textContent=t('assignments.pending'); info.appendChild(pending);
+    }
+    row.appendChild(info); group.appendChild(row);
+  });
+}
+async function loadCurrentAssignments(){
+  const button=$('refreshAssignmentsBtn'), hint=$('currentAssignmentsHint');
+  button.disabled=true; hint.textContent=t('assignments.loading'); hint.classList.remove('err');
+  try{
+    const data=await jsonResponse(await fetch('/api/assignments'));
+    renderCurrentAssignments(data.assignments||[]); hint.textContent='';
+  }catch(e){
+    $('currentAssignmentsList').innerHTML=''; hint.textContent=t('assignments.load_failed')+': '+e.message; hint.classList.add('err');
+  }finally{ button.disabled=false; }
+}
+$('refreshAssignmentsBtn').onclick=loadCurrentAssignments;
+if(ACTIVE_PAGE==='assignments') loadCurrentAssignments();
 $('lookupBtn').onclick = () => {
   const raw = $('manual').value.trim();
   if(!raw) return;

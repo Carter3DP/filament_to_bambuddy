@@ -69,6 +69,38 @@ def test_mapping_list_includes_remaining_filament_weight(client):
     assert result.get_json()["spools"][0]["remaining_weight"] == 725
 
 
+def test_current_assignments_are_normalized_sorted_and_include_remaining_weight(client):
+    assignments = [
+        {
+            "id": 3, "spool_id": 12, "printer_id": 8, "printer_name": "Zulu",
+            "ams_id": 255, "tray_id": 0, "spool": spool(12, weight_used=250),
+        },
+        {
+            "id": 2, "spool_id": 11, "printer_id": 7, "printer_name": "Alpha",
+            "ams_id": 0, "tray_id": 1, "ams_label": "Dry Box",
+            "configured": True, "spool": spool(11, weight_used=400),
+        },
+    ]
+    with patch("app.requests.get", return_value=response(payload=assignments)) as get:
+        result = client.get("/api/assignments")
+
+    assert result.status_code == 200
+    data = result.get_json()["assignments"]
+    assert [item["printer_name"] for item in data] == ["Alpha", "Zulu"]
+    assert data[0]["slot_label"] == "Dry Box · Slot 2"
+    assert data[0]["spool"]["remaining_weight"] == 600
+    assert data[1]["slot_label"] == "External spool"
+    assert get.call_args.args[0].endswith("/api/v1/inventory/assignments")
+
+
+def test_current_assignments_propagate_bambuddy_errors(client):
+    with patch("app.requests.get", return_value=response(status=503, payload={"detail": "Unavailable"})):
+        result = client.get("/api/assignments")
+
+    assert result.status_code == 503
+    assert result.get_json()["error"] == "Unavailable"
+
+
 def test_only_reusable_spool_scanners_enable_code_39(client):
     html = client.get("/").get_data(as_text=True)
 

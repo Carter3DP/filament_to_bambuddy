@@ -405,6 +405,11 @@ def assignment_page():
     return _render_page("assign")
 
 
+@app.get("/assignments")
+def assignments_page():
+    return _render_page("assignments")
+
+
 @app.get("/sw.js")
 def service_worker():
     # Served from the root so its scope covers the whole site (a SW under
@@ -744,6 +749,50 @@ def _slot_label(ams_id: int, tray_id: int, ams_label: str | None = None) -> str:
         return "External spool" if tray_id == 0 else f"External spool {tray_id + 1}"
     prefix = ams_label or (f"AMS {ams_id + 1}" if ams_id < 128 else f"AMS HT {ams_id - 127}")
     return f"{prefix} · Slot {tray_id + 1}"
+
+
+@app.get("/api/assignments")
+def current_assignments():
+    """Return Bambuddy's current filament-to-printer assignments."""
+    if not BAMBUDDY_API_KEY:
+        return jsonify(ok=False, error="BAMBUDDY_API_KEY not set on the server"), 400
+    try:
+        response = requests.get(
+            f"{BAMBUDDY_URL}/api/v1/inventory/assignments",
+            headers=_bambuddy_headers(), timeout=15,
+        )
+    except requests.RequestException as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+    if not response.ok:
+        return jsonify(ok=False, error=_bambuddy_error(response)), response.status_code
+
+    raw = response.json()
+    assignments = raw if isinstance(raw, list) else []
+    result = []
+    for assignment in assignments:
+        try:
+            printer_id = int(assignment.get("printer_id"))
+            ams_id = int(assignment.get("ams_id"))
+            tray_id = int(assignment.get("tray_id"))
+        except (TypeError, ValueError):
+            continue
+        result.append({
+            "id": assignment.get("id"),
+            "spool_id": assignment.get("spool_id"),
+            "printer_id": printer_id,
+            "printer_name": assignment.get("printer_name") or f"Printer {printer_id}",
+            "ams_id": ams_id,
+            "tray_id": tray_id,
+            "slot_label": _slot_label(ams_id, tray_id, assignment.get("ams_label")),
+            "configured": bool(assignment.get("configured")),
+            "pending_config": bool(assignment.get("pending_config")),
+            "spool": _spool_summary(assignment.get("spool")),
+        })
+    result.sort(key=lambda item: (
+        item["printer_name"].lower(), item["printer_id"],
+        item["ams_id"] == 255, item["ams_id"], item["tray_id"],
+    ))
+    return jsonify(ok=True, assignments=result)
 
 
 @app.get("/api/printers/<int:printer_id>/slots")

@@ -88,6 +88,7 @@ class TestIndexRouteLanguage:
             ("/spool-barcodes", "spools"),
             ("/printer-barcodes", "printers"),
             ("/assign-spool", "assign"),
+            ("/assignments", "assignments"),
         ],
     )
     def test_each_section_has_its_own_page(self, client, path, page):

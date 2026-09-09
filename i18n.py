@@ -28,6 +28,7 @@ EN = {
         "spools": "Spool barcodes",
         "printers": "Printer barcodes",
         "assign": "Assign spool",
+        "assignments": "Assignments",
     },
     "ptr": {
         "pull": "Pull to refresh",
@@ -197,6 +198,17 @@ EN = {
         "assign_failed": "Could not assign spool",
         "already_assigned": "That spool is already assigned to this slot",
         "choose_delete_option": "Choose whether to keep or delete the current spool, then press Assign again.",
+    },
+    "assignments": {
+        "title": "Current filament assignments",
+        "description": "Filament spools currently assigned to printer slots in Bambuddy.",
+        "refresh": "Refresh",
+        "loading": "Loading assignments…",
+        "none": "No filament spools are currently assigned to printers.",
+        "load_failed": "Could not load current assignments",
+        "unknown_spool": "Spool #{spool_id}",
+        "remaining": "{kg} kg remaining",
+        "pending": "Waiting for the spool to be inserted before configuring the printer slot.",
     },
 }
 
@@ -1244,6 +1256,7 @@ for _translations in (DE, ES, FR, JA, IT, KO, PT_BR, ZH_CN, ZH_TW, TR):
     _translations.setdefault("mapping", dict(EN["mapping"]))
     _translations.setdefault("printer_mapping", dict(EN["printer_mapping"]))
     _translations.setdefault("assignment", dict(EN["assignment"]))
+    _translations.setdefault("assignments", dict(EN["assignments"]))
 
 
 # All available translations. Language codes match Bambuddy's own supported
