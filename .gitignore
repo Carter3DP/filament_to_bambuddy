@@ -10,6 +10,7 @@ barcode_cache.json
 
 # Local reusable spool barcode -> Bambuddy spool ID map
 spool_barcodes.json
+printer_barcodes.json
 
 # Open Filament Database index (downloaded + rebuilt daily)
 ofd_index.json

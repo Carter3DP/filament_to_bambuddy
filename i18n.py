@@ -22,6 +22,13 @@ EN = {
     "app": {
         "title": "Filament → Bambuddy",
     },
+    "nav": {
+        "title": "App sections",
+        "add": "Add filament",
+        "spools": "Spool barcodes",
+        "printers": "Printer barcodes",
+        "assign": "Assign spool",
+    },
     "ptr": {
         "pull": "Pull to refresh",
         "release": "Release to refresh",
@@ -140,15 +147,38 @@ EN = {
         "edit": "Edit",
         "remove": "Remove",
         "unknown_spool": "Unknown spool",
-        "unknown_spool": "Unknown spool",
+    },
+    "printer_mapping": {
+        "title": "Printer barcodes",
+        "description": "Link a barcode to a printer or to one specific filament slot.",
+        "barcode": "Printer barcode",
+        "barcode_placeholder": "Scan or enter the printer barcode",
+        "scan": "📷 Scan barcode",
+        "printer_only": "Printer only — choose slot while assigning",
+        "save": "Save printer barcode",
+        "saved": "Printer barcode saved",
+        "removed": "Printer barcode removed",
+        "load_failed": "Could not load printer barcodes",
+        "save_failed": "Could not save printer barcode",
+        "missing_fields": "Scan or enter a barcode and choose a printer.",
+        "none": "No printer barcodes configured",
+        "edit": "Edit",
+        "remove": "Remove",
     },
     "assignment": {
         "title": "Assign a spool to a printer",
         "description": "Choose the printer and filament slot, then scan the reusable spool barcode.",
+        "printer_description": "Scan a printer barcode, choose the filament spool, and assign it to the saved target.",
+        "mode": "Barcode mode",
+        "spool_mode": "Spool barcode",
+        "printer_mode": "Printer barcode",
         "printer": "Printer",
         "slot": "Filament slot",
+        "filament": "Tracked filament spool",
         "barcode": "Reusable spool barcode",
         "barcode_placeholder": "Scan or enter the reusable spool barcode",
+        "printer_barcode": "Printer barcode",
+        "printer_barcode_placeholder": "Scan or enter the printer barcode",
         "scan": "📷 Scan barcode",
         "assign": "Assign spool",
         "choose_printer": "Choose a printer",
@@ -156,6 +186,8 @@ EN = {
         "no_slots": "No slots were reported for this printer",
         "load_failed": "Could not load printers or slots",
         "missing_fields": "Choose a printer and slot, then scan or enter a barcode.",
+        "printer_missing_fields": "Scan a printer barcode, choose a filament spool and slot, then assign it.",
+        "printer_not_mapped": "This barcode is not linked to a printer",
         "existing_spool": "{name} (#{spool_id}) is currently assigned here with {remaining}g remaining. Delete it from Bambuddy?",
         "keep_existing": "No — keep it in inventory (default)",
         "delete_existing": "Yes — permanently delete it and remove its barcode mapping",
@@ -1207,15 +1239,9 @@ TR = {
 # Materialize those keys in every locale so all dictionaries remain
 # structurally complete while the new copy is translated incrementally.
 for _translations in (DE, ES, FR, JA, IT, KO, PT_BR, ZH_CN, ZH_TW, TR):
+    _translations.setdefault("nav", dict(EN["nav"]))
     _translations.setdefault("mapping", dict(EN["mapping"]))
-    _translations.setdefault("assignment", dict(EN["assignment"]))
-
-
-# The reusable-spool workflow is new and currently ships with English copy.
-# Materialize those keys in every locale so all dictionaries stay
-# structurally complete while the new copy is translated incrementally.
-for _translations in (DE, ES, FR, JA, IT, KO, PT_BR, ZH_CN, ZH_TW, TR):
-    _translations.setdefault("mapping", dict(EN["mapping"]))
+    _translations.setdefault("printer_mapping", dict(EN["printer_mapping"]))
     _translations.setdefault("assignment", dict(EN["assignment"]))
 
 

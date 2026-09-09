@@ -1,7 +1,10 @@
 /* filament_to_bambuddy service worker — app-shell cache for installable PWA */
-const CACHE = "f2b-v1";
+const CACHE = "f2b-v2";
 const SHELL = [
   "/",
+  "/spool-barcodes",
+  "/printer-barcodes",
+  "/assign-spool",
   "/static/manifest.webmanifest",
   "/static/icons/icon-192.png",
   "/static/icons/icon-512.png",

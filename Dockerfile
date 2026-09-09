@@ -28,6 +28,7 @@ COPY static ./static
 ENV APP_VERSION=$VERSION \
     BARCODE_CACHE_FILE=/data/barcode_cache.json \
     SPOOL_BARCODE_FILE=/data/spool_barcodes.json \
+    PRINTER_BARCODE_FILE=/data/printer_barcodes.json \
     OFD_CACHE_FILE=/data/ofd_index.json \
     SPOOLMANDB_COMMUNITY_CACHE_FILE=/data/spoolmandb_community_index.json \
     HOST=0.0.0.0 \

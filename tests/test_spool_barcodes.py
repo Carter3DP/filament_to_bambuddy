@@ -22,6 +22,7 @@ def response(status=200, payload=None, text=""):
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "BAMBUDDY_API_KEY", "test-key")
     monkeypatch.setattr(app_module, "SPOOL_BARCODE_FILE", tmp_path / "spool_barcodes.json")
+    monkeypatch.setattr(app_module, "PRINTER_BARCODE_FILE", tmp_path / "printer_barcodes.json")
     app_module.app.testing = True
     return app_module.app.test_client()
 
@@ -78,6 +79,86 @@ def test_only_reusable_spool_scanners_enable_code_39(client):
     assert reusable_formats
     assert "F.CODE_39" not in new_spool_formats.group(1)
     assert "F.CODE_39" in reusable_formats.group(1)
+
+
+def test_saves_and_resolves_printer_only_barcode(client):
+    printers = [{"id": 7, "name": "Workshop X1C"}]
+    with patch("app.requests.get", return_value=response(payload=printers)):
+        saved = client.put("/api/printer-barcodes", json={
+            "barcode": "PRINTER-7", "printer_id": 7,
+        })
+
+    resolved = client.get("/api/printer-barcodes/resolve?barcode=PRINTER-7")
+
+    assert saved.status_code == 200
+    assert resolved.get_json()["target"] == {"printer_id": 7}
+
+
+def test_saves_fixed_printer_slot_and_defaults_assignment_to_it(client):
+    printers = [{"id": 7, "name": "Workshop X1C"}]
+    with patch("app.requests.get", return_value=response(payload=printers)):
+        saved = client.put("/api/printer-barcodes", json={
+            "barcode": "X1C-EXT", "printer_id": 7,
+            "ams_id": 255, "tray_id": 0, "slot_label": "External spool",
+        })
+    assert saved.status_code == 200
+
+    assignments = response(payload=[])
+    assigned = response(payload={
+        "id": 90, "spool_id": 22, "printer_id": 7, "ams_id": 255, "tray_id": 0,
+    })
+    with (
+        patch("app.requests.get", return_value=assignments),
+        patch("app.requests.post", return_value=assigned) as post,
+    ):
+        result = client.post("/api/spool-assignment", json={
+            "mode": "printer", "barcode": "X1C-EXT", "spool_id": 22,
+            # A configured slot is authoritative over stale client fields.
+            "ams_id": 0, "tray_id": 3,
+        })
+
+    assert result.status_code == 200
+    assert post.call_args.kwargs["json"] == {
+        "spool_id": 22, "printer_id": 7, "ams_id": 255, "tray_id": 0,
+    }
+
+
+def test_printer_only_barcode_uses_slot_selected_during_assignment(client):
+    app_module.save_printer_barcodes({"PRINTER-7": {"printer_id": 7}})
+    with (
+        patch("app.requests.get", return_value=response(payload=[])),
+        patch("app.requests.post", return_value=response(payload={"id": 91})) as post,
+    ):
+        result = client.post("/api/spool-assignment", json={
+            "mode": "printer", "barcode": "PRINTER-7", "spool_id": 22,
+            "ams_id": 0, "tray_id": 2,
+        })
+
+    assert result.status_code == 200
+    assert post.call_args.kwargs["json"] == {
+        "spool_id": 22, "printer_id": 7, "ams_id": 0, "tray_id": 2,
+    }
+
+
+def test_printer_barcode_mode_keeps_nonempty_replacement_confirmation(client):
+    app_module.save_printer_barcodes({
+        "X1C-EXT": {"printer_id": 7, "ams_id": 255, "tray_id": 0},
+    })
+    existing = {
+        "spool_id": 11, "ams_id": 255, "tray_id": 0,
+        "spool": spool(11, weight_used=250),
+    }
+    with (
+        patch("app.requests.get", return_value=response(payload=[existing])),
+        patch("app.requests.post") as post,
+    ):
+        result = client.post("/api/spool-assignment", json={
+            "mode": "printer", "barcode": "X1C-EXT", "spool_id": 22,
+        })
+
+    assert result.status_code == 409
+    assert result.get_json()["confirmation_required"] is True
+    post.assert_not_called()
 
 
 def test_printer_slots_include_ams_and_external_assignments(client):

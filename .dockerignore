@@ -8,7 +8,10 @@ run.sh
 .env
 *.local
 barcode_cache.json
+spool_barcodes.json
+printer_barcodes.json
 ofd_index.json
+spoolmandb_community_index.json
 .DS_Store
 .idea/
 .vscode/

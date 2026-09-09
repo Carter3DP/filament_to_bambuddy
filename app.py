@@ -50,6 +50,7 @@ BAMBUDDY_API_KEY = os.getenv("BAMBUDDY_API_KEY", "")
 DEFAULT_LABEL_WEIGHT = int(os.getenv("DEFAULT_LABEL_WEIGHT", "1000"))
 CACHE_FILE = Path(os.getenv("BARCODE_CACHE_FILE", "barcode_cache.json"))
 SPOOL_BARCODE_FILE = Path(os.getenv("SPOOL_BARCODE_FILE", "spool_barcodes.json"))
+PRINTER_BARCODE_FILE = Path(os.getenv("PRINTER_BARCODE_FILE", "printer_barcodes.json"))
 
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8088"))
@@ -226,6 +227,7 @@ APP_VERSION = _get_version()
 app = Flask(__name__)
 
 _spool_barcode_lock = threading.Lock()
+_printer_barcode_lock = threading.Lock()
 
 
 # ── Barcode cache (learns from your confirmed entries) ────────────────────────
@@ -269,6 +271,38 @@ def save_spool_barcodes(mapping: dict[str, int]):
     tmp = SPOOL_BARCODE_FILE.with_name(f".{SPOOL_BARCODE_FILE.name}.tmp")
     tmp.write_text(json.dumps(mapping, indent=2, sort_keys=True) + "\n")
     tmp.replace(SPOOL_BARCODE_FILE)
+
+
+def load_printer_barcodes() -> dict[str, dict]:
+    """Load reusable barcode -> printer or printer-slot targets."""
+    if not PRINTER_BARCODE_FILE.exists():
+        return {}
+    try:
+        data = json.loads(PRINTER_BARCODE_FILE.read_text())
+        if not isinstance(data, dict):
+            return {}
+        mapping = {}
+        for barcode, raw_target in data.items():
+            if not str(barcode).strip() or not isinstance(raw_target, dict):
+                continue
+            target = {"printer_id": int(raw_target["printer_id"])}
+            if raw_target.get("ams_id") is not None and raw_target.get("tray_id") is not None:
+                target["ams_id"] = int(raw_target["ams_id"])
+                target["tray_id"] = int(raw_target["tray_id"])
+                target["slot_label"] = str(raw_target.get("slot_label") or "")
+            mapping[str(barcode)] = target
+        return mapping
+    except (OSError, TypeError, ValueError, KeyError, json.JSONDecodeError):
+        log.warning("could not read printer barcode map", exc_info=True)
+        return {}
+
+
+def save_printer_barcodes(mapping: dict[str, dict]):
+    """Atomically persist the printer-barcode target map."""
+    PRINTER_BARCODE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = PRINTER_BARCODE_FILE.with_name(f".{PRINTER_BARCODE_FILE.name}.tmp")
+    tmp.write_text(json.dumps(mapping, indent=2, sort_keys=True) + "\n")
+    tmp.replace(PRINTER_BARCODE_FILE)
 
 
 def _bambuddy_headers(*, json_body: bool = False) -> dict[str, str]:
@@ -327,13 +361,13 @@ def _resolve_request_locale() -> str:
     )
 
 
-@app.get("/")
-def index():
+def _render_page(page: str):
     lang = _resolve_request_locale()
     translator = i18n.Translator(lang)
     resp = make_response(
         render_template(
             "index.html",
+            page=page,
             bambuddy_url=BAMBUDDY_URL,
             version=APP_VERSION,
             lang=lang,
@@ -349,6 +383,26 @@ def index():
     if request.args.get("lang") in i18n.TRANSLATIONS:
         resp.set_cookie(LANG_COOKIE_NAME, lang, max_age=LANG_COOKIE_MAX_AGE, samesite="Lax")
     return resp
+
+
+@app.get("/")
+def index():
+    return _render_page("add")
+
+
+@app.get("/spool-barcodes")
+def spool_barcode_page():
+    return _render_page("spools")
+
+
+@app.get("/printer-barcodes")
+def printer_barcode_page():
+    return _render_page("printers")
+
+
+@app.get("/assign-spool")
+def assignment_page():
+    return _render_page("assign")
 
 
 @app.get("/sw.js")
@@ -580,6 +634,91 @@ def delete_spool_barcode(spool_id):
     return jsonify(ok=True, removed=removed)
 
 
+@app.get("/api/printer-barcodes")
+def printer_barcodes():
+    """Return every saved barcode -> printer/printer-slot target."""
+    return jsonify(ok=True, mappings=[
+        {"barcode": barcode, **target}
+        for barcode, target in load_printer_barcodes().items()
+    ])
+
+
+@app.get("/api/printer-barcodes/resolve")
+def resolve_printer_barcode():
+    barcode = str(request.args.get("barcode") or "").strip()
+    target = load_printer_barcodes().get(barcode)
+    if target is None:
+        return jsonify(ok=False, error="This barcode is not linked to a printer"), 404
+    return jsonify(ok=True, barcode=barcode, target=target)
+
+
+@app.put("/api/printer-barcodes")
+def set_printer_barcode():
+    """Bind a unique barcode to either a printer or one fixed printer slot."""
+    if not BAMBUDDY_API_KEY:
+        return jsonify(ok=False, error="BAMBUDDY_API_KEY not set on the server"), 400
+    body = request.get_json(force=True, silent=True) or {}
+    barcode = str(body.get("barcode") or "").strip()
+    if not barcode or len(barcode) > 128:
+        return jsonify(ok=False, error="Barcode must contain 1 to 128 characters"), 400
+    try:
+        printer_id = int(body.get("printer_id"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="A valid printer_id is required"), 400
+
+    has_ams = body.get("ams_id") is not None
+    has_tray = body.get("tray_id") is not None
+    if has_ams != has_tray:
+        return jsonify(ok=False, error="ams_id and tray_id must be provided together"), 400
+    target = {"printer_id": printer_id}
+    if has_ams:
+        try:
+            target.update(ams_id=int(body["ams_id"]), tray_id=int(body["tray_id"]))
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error="A valid slot is required"), 400
+        target["slot_label"] = str(body.get("slot_label") or "")[:128]
+
+    try:
+        response = requests.get(
+            f"{BAMBUDDY_URL}/api/v1/printers/",
+            headers=_bambuddy_headers(), timeout=15,
+        )
+    except requests.RequestException as exc:
+        return jsonify(ok=False, error=str(exc)), 502
+    if not response.ok:
+        return jsonify(ok=False, error=_bambuddy_error(response)), response.status_code
+    printers = response.json() if isinstance(response.json(), list) else []
+    if not any(str(printer.get("id")) == str(printer_id) for printer in printers):
+        return jsonify(ok=False, error="That printer was not found in Bambuddy"), 404
+
+    with _printer_barcode_lock:
+        mapping = load_printer_barcodes()
+        target_key = (target.get("printer_id"), target.get("ams_id"), target.get("tray_id"))
+        replaced = [
+            code for code, saved_target in mapping.items()
+            if code != barcode and (
+                saved_target.get("printer_id"),
+                saved_target.get("ams_id"),
+                saved_target.get("tray_id"),
+            ) == target_key
+        ]
+        for code in replaced:
+            del mapping[code]
+        mapping[barcode] = target
+        save_printer_barcodes(mapping)
+    return jsonify(ok=True, barcode=barcode, target=target, replaced=replaced)
+
+
+@app.delete("/api/printer-barcodes/<path:barcode>")
+def delete_printer_barcode(barcode):
+    with _printer_barcode_lock:
+        mapping = load_printer_barcodes()
+        removed = mapping.pop(barcode, None)
+        if removed is not None:
+            save_printer_barcodes(mapping)
+    return jsonify(ok=True, removed=removed is not None)
+
+
 @app.get("/api/printers")
 def printers():
     """Proxy Bambuddy's printer list without exposing its API key to the browser."""
@@ -672,24 +811,38 @@ def printer_slots(printer_id):
 
 @app.post("/api/spool-assignment")
 def assign_spool_by_barcode():
-    """Resolve a reusable barcode and assign its spool to a Bambuddy slot."""
+    """Assign by either a spool barcode or a printer-target barcode."""
     if not BAMBUDDY_API_KEY:
         return jsonify(ok=False, error="BAMBUDDY_API_KEY not set on the server"), 400
     body = request.get_json(force=True, silent=True) or {}
+    mode = str(body.get("mode") or "spool")
     barcode = str(body.get("barcode") or "").strip()
-    try:
-        printer_id = int(body.get("printer_id"))
-        ams_id = int(body.get("ams_id"))
-        tray_id = int(body.get("tray_id"))
-    except (TypeError, ValueError):
-        return jsonify(ok=False, error="Printer and slot are required"), 400
     if not barcode:
         return jsonify(ok=False, error="Barcode is required"), 400
 
-    mapping = load_spool_barcodes()
-    spool_id = mapping.get(barcode)
-    if spool_id is None:
-        return jsonify(ok=False, error="This barcode is not linked to a tracked spool"), 404
+    if mode == "printer":
+        target = load_printer_barcodes().get(barcode)
+        if target is None:
+            return jsonify(ok=False, error="This barcode is not linked to a printer"), 404
+        try:
+            spool_id = int(body.get("spool_id"))
+            printer_id = int(target["printer_id"])
+            ams_id = int(target.get("ams_id", body.get("ams_id")))
+            tray_id = int(target.get("tray_id", body.get("tray_id")))
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error="A filament spool and printer slot are required"), 400
+    elif mode == "spool":
+        spool_id = load_spool_barcodes().get(barcode)
+        if spool_id is None:
+            return jsonify(ok=False, error="This barcode is not linked to a tracked spool"), 404
+        try:
+            printer_id = int(body.get("printer_id"))
+            ams_id = int(body.get("ams_id"))
+            tray_id = int(body.get("tray_id"))
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error="Printer and slot are required"), 400
+    else:
+        return jsonify(ok=False, error="Assignment mode must be 'spool' or 'printer'"), 400
 
     try:
         assignments_response = requests.get(
