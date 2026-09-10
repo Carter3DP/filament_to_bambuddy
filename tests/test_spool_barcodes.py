@@ -172,6 +172,37 @@ def test_printer_only_barcode_uses_slot_selected_during_assignment(client):
     }
 
 
+def test_already_assigned_spool_ids_are_compared_as_integers(client):
+    app_module.save_spool_barcodes({"TARGET": 22})
+    existing = {
+        "spool_id": "22", "ams_id": "0", "tray_id": "2",
+        "spool": spool(22, weight_used=250),
+    }
+    with (
+        patch("app.requests.get", return_value=response(payload=[existing])),
+        patch("app.requests.post") as post,
+    ):
+        result = client.post("/api/spool-assignment", json={
+            "barcode": "TARGET", "printer_id": 7, "ams_id": 0, "tray_id": 2,
+        })
+
+    assert result.status_code == 200
+    assert result.get_json()["already_assigned"] is True
+    post.assert_not_called()
+
+
+def test_success_refresh_keeps_replacement_prompt_closed(client):
+    html = client.get("/assign-spool").get_data(as_text=True)
+
+    assert (
+        "await Promise.all([loadSlots(),loadMappings()]);\n"
+        "    }\n"
+        "    // loadSlots() sees the assignment that just succeeded as an occupied\n"
+        in html
+    )
+    assert "$('existingChoice').classList.add('hidden');\n  }catch(e){" in html
+
+
 def test_printer_barcode_mode_keeps_nonempty_replacement_confirmation(client):
     app_module.save_printer_barcodes({
         "X1C-EXT": {"printer_id": 7, "ams_id": 255, "tray_id": 0},

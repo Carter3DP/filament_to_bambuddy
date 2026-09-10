@@ -991,6 +991,10 @@ $('assignBtn').onclick=async()=>{
     }else{
       await Promise.all([loadSlots(),loadMappings()]);
     }
+    // loadSlots() sees the assignment that just succeeded as an occupied
+    // slot. Keep its replacement prompt closed until the user starts the
+    // next assignment.
+    $('existingChoice').classList.add('hidden');
   }catch(e){
     const message=e.message||t('assignment.assign_failed');
     $('assignHint').textContent=message; $('assignHint').classList.add('err'); toast(message,false);

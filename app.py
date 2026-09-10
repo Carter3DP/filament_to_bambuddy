@@ -903,10 +903,21 @@ def assign_spool_by_barcode():
     if not assignments_response.ok:
         return jsonify(ok=False, error=_bambuddy_error(assignments_response)), assignments_response.status_code
     assignments = assignments_response.json() if isinstance(assignments_response.json(), list) else []
-    existing = next((a for a in assignments
-                     if a.get("ams_id") == ams_id and a.get("tray_id") == tray_id), None)
+    # Older Bambuddy versions and some database drivers may serialize these
+    # integer IDs as strings. Normalize them before deciding whether the
+    # selected slot already contains the requested spool.
+    existing = next((
+        assignment for assignment in assignments
+        if str(assignment.get("ams_id")) == str(ams_id)
+        and str(assignment.get("tray_id")) == str(tray_id)
+    ), None)
     old_spool = _spool_summary(existing.get("spool")) if existing else None
-    if existing and existing.get("spool_id") == spool_id:
+    existing_spool_id = existing.get("spool_id") if existing else None
+    try:
+        existing_spool_id = int(existing_spool_id)
+    except (TypeError, ValueError):
+        existing_spool_id = None
+    if existing and existing_spool_id == spool_id:
         return jsonify(ok=True, already_assigned=True, spool_id=spool_id,
                        assignment=existing, deleted_existing=False)
 
