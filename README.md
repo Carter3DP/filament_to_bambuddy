@@ -38,6 +38,10 @@ Dedicated pages also support reusable-spool and printer barcodes:
    filament spool, and assign it immediately. Printer-only mappings ask for a
    slot at assignment time; a printer with one reported slot selects it
    automatically.
+5. In **Spool + Printer barcode** mode, scan both saved codes. The app resolves
+   the tracked spool and fixed printer slot without requiring either dropdown.
+   Every new scan clears stale printer, slot, spool, and replacement choices
+   before resolving the current barcode values.
 
 The navigation separates adding filament, spool barcodes, printer barcodes,
 and printer assignment so each workflow has its own uncluttered page.

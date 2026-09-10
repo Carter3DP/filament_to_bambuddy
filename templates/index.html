@@ -184,6 +184,7 @@
     <select id="assignMode">
       <option value="spool">{{ t('assignment.spool_mode') }}</option>
       <option value="printer">{{ t('assignment.printer_mode') }}</option>
+      <option value="both">{{ t('assignment.both_mode') }}</option>
     </select>
     <label for="assignPrinter">{{ t('assignment.printer') }}</label>
     <select id="assignPrinter"></select>
@@ -200,6 +201,11 @@
       <video id="assignVideo" playsinline></video>
     </div>
     <button id="assignStopBtn" class="btn-secondary hidden" style="margin-top:10px">{{ t('scan.stop_camera') }}</button>
+    <div id="assignPrinterBarcodeWrap" class="hidden">
+      <label for="assignPrinterBarcode">{{ t('assignment.printer_barcode') }}</label>
+      <input id="assignPrinterBarcode" autocomplete="off" placeholder="{{ t('assignment.printer_barcode_placeholder') }}">
+      <button id="assignPrinterScanBtn" class="btn-secondary" style="margin-top:10px">{{ t('assignment.scan_printer') }}</button>
+    </div>
     <div id="assignHint" class="hint"></div>
     <div id="existingChoice" class="warning hidden">
       <div id="existingMessage"></div>
@@ -696,7 +702,7 @@ async function startAccessoryScan(prefix, inputId){
       $(inputId).value=value;
       $(prefix+'Hint').textContent='';
       stopAccessoryScan(prefix);
-      if(prefix==='assign' && $('assignMode').value==='printer') resolveAssignmentPrinter();
+      if(prefix==='assign') assignmentBarcodeScanned(inputId);
     });
   }catch(e){
     $(prefix+'Hint').textContent=t('scan.camera_error',{error:e});
@@ -705,6 +711,7 @@ async function startAccessoryScan(prefix, inputId){
 }
 $('mapScanBtn').onclick=()=>startAccessoryScan('map','mapBarcode');
 $('assignScanBtn').onclick=()=>startAccessoryScan('assign','assignBarcode');
+$('assignPrinterScanBtn').onclick=()=>startAccessoryScan('assign','assignPrinterBarcode');
 $('printerMapScanBtn').onclick=()=>startAccessoryScan('printerMap','printerMapBarcode');
 $('mapStopBtn').onclick=()=>stopAccessoryScan('map');
 $('assignStopBtn').onclick=()=>stopAccessoryScan('assign');
@@ -867,6 +874,20 @@ $('printerMapBarcode').addEventListener('keydown',e=>{ if(e.key==='Enter'){e.pre
 
 // ── Assign a spool using either a spool barcode or printer barcode ──
 let printerSlots=[], resolvedPrinterTarget=null, assignmentResolveTimer=null, assignmentResolvePromise=null;
+function clearAssignmentSlots(){
+  resolvedPrinterTarget=null; printerSlots=[];
+  $('assignPrinter').value=''; $('assignSlot').innerHTML=''; $('assignSlot').disabled=true;
+  $('assignSpool').value=''; $('existingChoice').classList.add('hidden');
+  $('assignHint').textContent=''; $('assignHint').classList.remove('err');
+}
+async function assignmentBarcodeScanned(inputId){
+  // A scan starts a fresh resolution pass. This prevents printer, slot,
+  // filament, and replacement choices from a previous scan being reused.
+  clearAssignmentSlots();
+  const mode=$('assignMode').value;
+  if(mode==='printer') await resolveAssignmentPrinter();
+  else if(mode==='both') await resolveCombinedAssignment();
+}
 function currentSlot(){
   const [ams,tray]=($('assignSlot').value||'').split(':').map(Number);
   if(!Number.isInteger(ams)||!Number.isInteger(tray)) return null;
@@ -895,7 +916,7 @@ async function loadSlots(fixedTarget=null){
       const option=document.createElement('option'); option.value=slot.ams_id+':'+slot.tray_id;
       option.textContent=slot.label+(slot.assignment?' — '+spoolName(slot.assignment.spool):''); select.appendChild(option);
     });
-    select.disabled=!printerSlots.length || ($('assignMode').value==='printer' && fixedTarget && fixedTarget.ams_id!=null);
+    select.disabled=!printerSlots.length || (($('assignMode').value==='printer'||$('assignMode').value==='both') && fixedTarget && fixedTarget.ams_id!=null);
     if(!printerSlots.length) $('assignHint').textContent=t('assignment.no_slots');
     else if(fixedTarget && fixedTarget.ams_id!=null){
       select.value=fixedTarget.ams_id+':'+fixedTarget.tray_id;
@@ -929,17 +950,18 @@ async function loadPrinters(){
   }catch(e){ $('assignHint').textContent=t('assignment.load_failed')+': '+e.message; $('assignHint').classList.add('err'); }
 }
 async function resolveAssignmentPrinter(){
-  if($('assignMode').value!=='printer') return;
-  const barcode=$('assignBarcode').value.trim();
+  const mode=$('assignMode').value;
+  if(mode!=='printer' && mode!=='both') return;
+  const barcode=$(mode==='both'?'assignPrinterBarcode':'assignBarcode').value.trim();
   resolvedPrinterTarget=null; $('assignPrinter').value=''; $('assignSlot').innerHTML=''; $('assignSlot').disabled=true;
   if(!barcode) return;
   const work=(async()=>{
     try{
       const data=await jsonResponse(await fetch('/api/printer-barcodes/resolve?barcode='+encodeURIComponent(barcode)));
-      if($('assignBarcode').value.trim()!==barcode || $('assignMode').value!=='printer') return;
+      if($(mode==='both'?'assignPrinterBarcode':'assignBarcode').value.trim()!==barcode || $('assignMode').value!==mode) return;
       $('assignPrinter').value=String(data.target.printer_id);
       await loadSlots(data.target);
-      if($('assignBarcode').value.trim()!==barcode || $('assignMode').value!=='printer') return;
+      if($(mode==='both'?'assignPrinterBarcode':'assignBarcode').value.trim()!==barcode || $('assignMode').value!==mode) return;
       resolvedPrinterTarget=data.target;
       $('assignHint').textContent=printerTargetName(data.target); $('assignHint').classList.remove('err');
     }catch(e){
@@ -951,30 +973,41 @@ async function resolveAssignmentPrinter(){
   try{ await work; }
   finally{ if(assignmentResolvePromise===work) assignmentResolvePromise=null; }
 }
+async function resolveCombinedAssignment(){
+  const spoolBarcode=$('assignBarcode').value.trim();
+  const spoolEntry=Object.entries(spoolMappings).find(([,code])=>code===spoolBarcode);
+  $('assignSpool').value=spoolEntry ? String(spoolEntry[0]) : '';
+  if(spoolBarcode && !spoolEntry){
+    $('assignHint').textContent=t('assignment.spool_not_mapped'); $('assignHint').classList.add('err');
+  }
+  if($('assignPrinterBarcode').value.trim()) await resolveAssignmentPrinter();
+}
 function setAssignmentMode(){
-  const printerMode=$('assignMode').value==='printer';
-  resolvedPrinterTarget=null; $('assignBarcode').value=''; $('assignHint').textContent=''; $('existingChoice').classList.add('hidden');
+  const mode=$('assignMode').value, printerMode=mode==='printer', bothMode=mode==='both';
+  $('assignBarcode').value=''; $('assignPrinterBarcode').value=''; clearAssignmentSlots();
   $('assignSpoolWrap').classList.toggle('hidden',!printerMode);
-  $('assignPrinter').disabled=printerMode;
-  $('assignSlot').disabled=printerMode;
-  $('assignmentDescription').textContent=t(printerMode?'assignment.printer_description':'assignment.description');
+  $('assignPrinterBarcodeWrap').classList.toggle('hidden',!bothMode);
+  $('assignPrinter').disabled=printerMode||bothMode;
+  $('assignSlot').disabled=printerMode||bothMode;
+  $('assignmentDescription').textContent=t(bothMode?'assignment.both_description':(printerMode?'assignment.printer_description':'assignment.description'));
   $('assignBarcodeLabel').textContent=t(printerMode?'assignment.printer_barcode':'assignment.barcode');
   $('assignBarcode').placeholder=t(printerMode?'assignment.printer_barcode_placeholder':'assignment.barcode_placeholder');
-  if(printerMode){ $('assignPrinter').value=''; $('assignSlot').innerHTML=''; }
 }
 $('assignMode').onchange=setAssignmentMode;
 $('assignPrinter').onchange=()=>{ if($('assignMode').value==='spool') loadSlots(); };
 $('assignSlot').onchange=()=>{ const slot=currentSlot(); showExistingChoice(slot&&slot.assignment&&slot.assignment.spool); };
 $('assignBtn').onclick=async()=>{
-  const mode=$('assignMode').value, barcode=$('assignBarcode').value.trim();
-  if(mode==='printer' && assignmentResolvePromise) await assignmentResolvePromise;
-  if(mode==='printer' && !resolvedPrinterTarget) await resolveAssignmentPrinter();
+  const mode=$('assignMode').value, spoolBarcode=$('assignBarcode').value.trim();
+  const barcode=mode==='both'?$('assignPrinterBarcode').value.trim():spoolBarcode;
+  if((mode==='printer'||mode==='both') && assignmentResolvePromise) await assignmentResolvePromise;
+  if((mode==='printer'||mode==='both') && !resolvedPrinterTarget) await resolveAssignmentPrinter();
   const printerId=Number($('assignPrinter').value), slot=currentSlot(), spoolId=Number($('assignSpool').value);
-  if(!printerId||!slot||!barcode||(mode==='printer'&&!spoolId)){
-    $('assignHint').textContent=t(mode==='printer'?'assignment.printer_missing_fields':'assignment.missing_fields'); $('assignHint').classList.add('err'); return;
+  if(!printerId||!slot||!barcode||((mode==='printer'||mode==='both')&&!spoolId)||(mode==='both'&&!spoolBarcode)){
+    $('assignHint').textContent=t(mode==='both'?'assignment.both_missing_fields':(mode==='printer'?'assignment.printer_missing_fields':'assignment.missing_fields')); $('assignHint').classList.add('err'); return;
   }
   const body={mode,barcode,printer_id:printerId,ams_id:slot.ams_id,tray_id:slot.tray_id};
   if(mode==='printer') body.spool_id=spoolId;
+  if(mode==='both') Object.assign(body,{spool_barcode:spoolBarcode,printer_barcode:barcode});
   if(!$('existingChoice').classList.contains('hidden')) body.delete_existing=document.querySelector('input[name="deleteExisting"]:checked').value==='delete';
   $('assignBtn').disabled=true;
   $('assignHint').textContent=t('assignment.assigning'); $('assignHint').classList.remove('err');
@@ -985,16 +1018,8 @@ $('assignBtn').onclick=async()=>{
     if(!response.ok||data.ok===false) throw new Error(data.error||('HTTP '+response.status));
     const message=data.already_assigned?t('assignment.already_assigned'):(data.deleted_existing?t('assignment.deleted_and_assigned',{spool_id:data.spool_id}):t('assignment.assigned',{spool_id:data.spool_id}));
     $('assignHint').textContent=message; $('assignHint').classList.remove('err'); toast(message); if(data.warning) toast(data.warning,false);
-    $('assignBarcode').value=''; resolvedPrinterTarget=null; $('existingChoice').classList.add('hidden');
-    if(mode==='printer'){
-      $('assignPrinter').value=''; $('assignSlot').innerHTML=''; $('assignSlot').disabled=true; await loadMappings();
-    }else{
-      await Promise.all([loadSlots(),loadMappings()]);
-    }
-    // loadSlots() sees the assignment that just succeeded as an occupied
-    // slot. Keep its replacement prompt closed until the user starts the
-    // next assignment.
-    $('existingChoice').classList.add('hidden');
+    $('assignBarcode').value=''; $('assignPrinterBarcode').value=''; clearAssignmentSlots();
+    await loadMappings();
   }catch(e){
     const message=e.message||t('assignment.assign_failed');
     $('assignHint').textContent=message; $('assignHint').classList.add('err'); toast(message,false);
@@ -1002,12 +1027,26 @@ $('assignBtn').onclick=async()=>{
   finally{ $('assignBtn').disabled=false; }
 };
 $('assignBarcode').addEventListener('input',()=>{
-  if($('assignMode').value!=='printer') return;
-  clearTimeout(assignmentResolveTimer); assignmentResolveTimer=setTimeout(resolveAssignmentPrinter,350);
+  const mode=$('assignMode').value;
+  if(mode==='printer'){
+    clearTimeout(assignmentResolveTimer); assignmentResolveTimer=setTimeout(()=>{clearAssignmentSlots();resolveAssignmentPrinter();},350);
+  }else if(mode==='both'){
+    clearTimeout(assignmentResolveTimer); assignmentResolveTimer=setTimeout(()=>{clearAssignmentSlots();resolveCombinedAssignment();},350);
+  }
+});
+$('assignPrinterBarcode').addEventListener('input',()=>{
+  if($('assignMode').value!=='both') return;
+  clearTimeout(assignmentResolveTimer); assignmentResolveTimer=setTimeout(()=>{clearAssignmentSlots();resolveCombinedAssignment();},350);
 });
 $('assignBarcode').addEventListener('keydown',e=>{
   if(e.key!=='Enter') return; e.preventDefault();
-  if($('assignMode').value==='printer') resolveAssignmentPrinter(); else $('assignBtn').click();
+  const mode=$('assignMode').value;
+  if(mode==='printer') assignmentBarcodeScanned('assignBarcode');
+  else if(mode==='both') assignmentBarcodeScanned('assignBarcode');
+  else { clearAssignmentSlots(); $('assignBtn').click(); }
+});
+$('assignPrinterBarcode').addEventListener('keydown',e=>{
+  if(e.key!=='Enter') return; e.preventDefault(); assignmentBarcodeScanned('assignPrinterBarcode');
 });
 setAssignmentMode();
 if(ACTIVE_PAGE==='spools' || ACTIVE_PAGE==='assign') loadMappings();

@@ -860,16 +860,31 @@ def printer_slots(printer_id):
 
 @app.post("/api/spool-assignment")
 def assign_spool_by_barcode():
-    """Assign by either a spool barcode or a printer-target barcode."""
+    """Assign by a spool barcode, printer barcode, or one of each."""
     if not BAMBUDDY_API_KEY:
         return jsonify(ok=False, error="BAMBUDDY_API_KEY not set on the server"), 400
     body = request.get_json(force=True, silent=True) or {}
     mode = str(body.get("mode") or "spool")
     barcode = str(body.get("barcode") or "").strip()
-    if not barcode:
+    if not barcode and mode != "both":
         return jsonify(ok=False, error="Barcode is required"), 400
 
-    if mode == "printer":
+    if mode == "both":
+        spool_barcode = str(body.get("spool_barcode") or "").strip()
+        printer_barcode = str(body.get("printer_barcode") or "").strip()
+        spool_id = load_spool_barcodes().get(spool_barcode)
+        target = load_printer_barcodes().get(printer_barcode)
+        if spool_id is None:
+            return jsonify(ok=False, error="This barcode is not linked to a tracked spool"), 404
+        if target is None:
+            return jsonify(ok=False, error="This barcode is not linked to a printer"), 404
+        try:
+            printer_id = int(target["printer_id"])
+            ams_id = int(target.get("ams_id", body.get("ams_id")))
+            tray_id = int(target.get("tray_id", body.get("tray_id")))
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error="The printer barcode must identify a filament slot"), 400
+    elif mode == "printer":
         target = load_printer_barcodes().get(barcode)
         if target is None:
             return jsonify(ok=False, error="This barcode is not linked to a printer"), 404
@@ -891,7 +906,7 @@ def assign_spool_by_barcode():
         except (TypeError, ValueError):
             return jsonify(ok=False, error="Printer and slot are required"), 400
     else:
-        return jsonify(ok=False, error="Assignment mode must be 'spool' or 'printer'"), 400
+        return jsonify(ok=False, error="Assignment mode must be 'spool', 'printer', or 'both'"), 400
 
     try:
         assignments_response = requests.get(
