@@ -81,6 +81,21 @@ class TestIndexRouteLanguage:
         assert "{{" not in body
         assert f'const I18N_LANG = "{lang}";' in body
 
+    @pytest.mark.parametrize(
+        ("path", "page"),
+        [
+            ("/", "add"),
+            ("/spool-barcodes", "spools"),
+            ("/printer-barcodes", "printers"),
+            ("/assign-spool", "assign"),
+            ("/assignments", "assignments"),
+        ],
+    )
+    def test_each_section_has_its_own_page(self, client, path, page):
+        resp = client.get(path)
+        assert resp.status_code == 200
+        assert f'<body data-page="{page}">'.encode() in resp.data
+
 
 class TestResolveRequestLocaleHelper:
     """Covers app._resolve_request_locale directly, isolated from the

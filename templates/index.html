@@ -35,6 +35,14 @@
     display:flex;align-items:center;gap:10px;
     border-bottom:1px solid #333;position:sticky;top:0;background:var(--bg);z-index:5}
   header h1{font-size:18px;margin:0;font-weight:600}
+  nav{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:10px 16px;
+    border-bottom:1px solid #333;background:var(--bg)}
+  nav a{color:var(--muted);background:var(--card);padding:8px 11px;border-radius:9px;
+    text-decoration:none;font-size:13px;white-space:nowrap;text-align:center;overflow:hidden;text-overflow:ellipsis}
+  nav a.active{color:#0a0a0a;background:var(--green);font-weight:600}
+  @media (min-width:620px){
+    nav{grid-template-columns:repeat(5,max-content);justify-content:center}
+  }
   .cube{width:26px;height:26px;flex:0 0 auto}
   main{padding:16px;max-width:560px;margin:0 auto;
     padding-bottom:calc(48px + env(safe-area-inset-bottom))}
@@ -51,7 +59,7 @@
   .btn-primary{background:var(--green);color:#0a0a0a;width:100%}
   .btn-primary:disabled{background:#066b2c;color:#5a5a5a}
   .btn-secondary{background:var(--tertiary);color:var(--fg);width:100%}
-  #video{width:100%;border-radius:var(--radius);background:#000;aspect-ratio:4/3;object-fit:cover;display:block}
+  #video,#mapVideo,#assignVideo,#printerMapVideo{width:100%;border-radius:var(--radius);background:#000;aspect-ratio:4/3;object-fit:cover;display:block}
   #videoWrap{position:relative;border-radius:var(--radius);overflow:hidden}
   .hidden{display:none}
   /* Scan viewfinder: guide box + corner brackets + sweeping scan line, so
@@ -81,9 +89,26 @@
   .hint{font-size:12px;color:var(--muted);margin-top:6px}
   .hint.err{color:var(--danger)}
   .status-dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:6px}
+  .section-title{font-weight:600;margin-bottom:4px}
+  .mapping-list{margin-top:12px;border-top:1px solid #444}
+  .mapping-item{display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #444}
+  .mapping-item:last-child{border-bottom:0}
+  .mapping-code{font:12px Menlo,Consolas,monospace;color:var(--green-light);overflow-wrap:anywhere}
+  .btn-small{width:auto;padding:7px 10px;font-size:12px;flex:0 0 auto}
+  .choice{display:flex;align-items:flex-start;gap:8px;padding:9px;border:1px solid #4a4a4a;border-radius:9px;margin-top:8px;color:var(--fg);font-size:14px}
+  .choice input{width:auto;margin:2px 0 0;accent-color:var(--green)}
+  .warning{border-left:3px solid #e0a800;padding:8px 10px;margin-top:10px;background:#392f12;border-radius:6px}
+  .assignment-group{margin-top:14px}
+  .assignment-printer{font-weight:600;padding:8px 0;border-bottom:1px solid #555}
+  .assignment-slot{font-size:13px;color:var(--green-light);margin-bottom:3px}
+  body:not([data-page="add"]) .page-add,
+  body:not([data-page="spools"]) .page-spools,
+  body:not([data-page="printers"]) .page-printers,
+  body:not([data-page="assign"]) .page-assign,
+  body:not([data-page="assignments"]) .page-assignments{display:none}
 </style>
 </head>
-<body>
+<body data-page="{{ page }}">
 <div id="ptr"><span id="ptrIcon">↓</span><span id="ptrText">{{ t('ptr.pull') }}</span></div>
 <header>
   <svg class="cube" viewBox="0 0 64 64" aria-hidden="true">
@@ -93,6 +118,13 @@
   </svg>
   <h1>{{ t('app.title') }}</h1>
 </header>
+<nav aria-label="{{ t('nav.title') }}">
+  <a href="/"{% if page == 'add' %} class="active"{% endif %}>{{ t('nav.add') }}</a>
+  <a href="/spool-barcodes"{% if page == 'spools' %} class="active"{% endif %}>{{ t('nav.spools') }}</a>
+  <a href="/printer-barcodes"{% if page == 'printers' %} class="active"{% endif %}>{{ t('nav.printers') }}</a>
+  <a href="/assign-spool"{% if page == 'assign' %} class="active"{% endif %}>{{ t('nav.assign') }}</a>
+  <a href="/assignments"{% if page == 'assignments' %} class="active"{% endif %}>{{ t('nav.assignments') }}</a>
+</nav>
 
 <main>
   <div class="card">
@@ -104,8 +136,98 @@
     <div style="margin-top:6px"><a id="clearCache" href="#" style="color:var(--muted);font-size:12px">{{ t('scan.clear_cache') }}</a></div>
   </div>
 
+  <!-- Reusable barcode -> tracked spool mapping -->
+  <div class="card page-spools" id="barcodeMapCard">
+    <div class="section-title">{{ t('mapping.title') }}</div>
+    <div class="muted">{{ t('mapping.description') }}</div>
+    <label for="mapSpool">{{ t('mapping.spool') }}</label>
+    <select id="mapSpool"></select>
+    <label for="mapBarcode">{{ t('mapping.barcode') }}</label>
+    <input id="mapBarcode" autocomplete="off" placeholder="{{ t('mapping.barcode_placeholder') }}">
+    <div class="row" style="margin-top:10px">
+      <div><button id="mapScanBtn" class="btn-secondary">{{ t('mapping.scan') }}</button></div>
+      <div><button id="mapSaveBtn" class="btn-primary">{{ t('mapping.save') }}</button></div>
+    </div>
+    <div id="mapVideoWrap" class="hidden" style="margin-top:10px">
+      <video id="mapVideo" playsinline></video>
+    </div>
+    <button id="mapStopBtn" class="btn-secondary hidden" style="margin-top:10px">{{ t('scan.stop_camera') }}</button>
+    <div id="mapHint" class="hint"></div>
+    <div id="mappingList" class="mapping-list"></div>
+  </div>
+
+  <!-- Reusable barcode -> printer or fixed printer slot mapping -->
+  <div class="card page-printers" id="printerBarcodeMapCard">
+    <div class="section-title">{{ t('printer_mapping.title') }}</div>
+    <div class="muted">{{ t('printer_mapping.description') }}</div>
+    <label for="printerMapBarcode">{{ t('printer_mapping.barcode') }}</label>
+    <input id="printerMapBarcode" autocomplete="off" placeholder="{{ t('printer_mapping.barcode_placeholder') }}">
+    <button id="printerMapScanBtn" class="btn-secondary" style="margin-top:10px">{{ t('printer_mapping.scan') }}</button>
+    <div id="printerMapVideoWrap" class="hidden" style="margin-top:10px">
+      <video id="printerMapVideo" playsinline></video>
+    </div>
+    <button id="printerMapStopBtn" class="btn-secondary hidden" style="margin-top:10px">{{ t('scan.stop_camera') }}</button>
+    <label for="printerMapPrinter">{{ t('assignment.printer') }}</label>
+    <select id="printerMapPrinter"></select>
+    <label for="printerMapSlot">{{ t('assignment.slot') }}</label>
+    <select id="printerMapSlot" disabled></select>
+    <div id="printerMapHint" class="hint"></div>
+    <button id="printerMapSaveBtn" class="btn-primary" style="margin-top:12px">{{ t('printer_mapping.save') }}</button>
+    <div id="printerMappingList" class="mapping-list"></div>
+  </div>
+
+  <!-- Assign a mapped reusable spool to a printer slot -->
+  <div class="card page-assign" id="assignmentCard">
+    <div class="section-title">{{ t('assignment.title') }}</div>
+    <div class="muted" id="assignmentDescription">{{ t('assignment.description') }}</div>
+    <label for="assignMode">{{ t('assignment.mode') }}</label>
+    <select id="assignMode">
+      <option value="spool">{{ t('assignment.spool_mode') }}</option>
+      <option value="printer">{{ t('assignment.printer_mode') }}</option>
+      <option value="both">{{ t('assignment.both_mode') }}</option>
+    </select>
+    <label for="assignPrinter">{{ t('assignment.printer') }}</label>
+    <select id="assignPrinter"></select>
+    <label for="assignSlot">{{ t('assignment.slot') }}</label>
+    <select id="assignSlot" disabled></select>
+    <div id="assignSpoolWrap" class="hidden">
+      <label for="assignSpool">{{ t('assignment.filament') }}</label>
+      <select id="assignSpool"></select>
+    </div>
+    <label for="assignBarcode" id="assignBarcodeLabel">{{ t('assignment.barcode') }}</label>
+    <input id="assignBarcode" autocomplete="off" placeholder="{{ t('assignment.barcode_placeholder') }}">
+    <button id="assignScanBtn" class="btn-secondary" style="margin-top:10px">{{ t('assignment.scan') }}</button>
+    <div id="assignVideoWrap" class="hidden" style="margin-top:10px">
+      <video id="assignVideo" playsinline></video>
+    </div>
+    <button id="assignStopBtn" class="btn-secondary hidden" style="margin-top:10px">{{ t('scan.stop_camera') }}</button>
+    <div id="assignPrinterBarcodeWrap" class="hidden">
+      <label for="assignPrinterBarcode">{{ t('assignment.printer_barcode') }}</label>
+      <input id="assignPrinterBarcode" autocomplete="off" placeholder="{{ t('assignment.printer_barcode_placeholder') }}">
+      <button id="assignPrinterScanBtn" class="btn-secondary" style="margin-top:10px">{{ t('assignment.scan_printer') }}</button>
+    </div>
+    <div id="assignHint" class="hint"></div>
+    <div id="existingChoice" class="warning hidden">
+      <div id="existingMessage"></div>
+      <label class="choice"><input type="radio" name="deleteExisting" value="keep" checked><span>{{ t('assignment.keep_existing') }}</span></label>
+      <label class="choice"><input type="radio" name="deleteExisting" value="delete"><span>{{ t('assignment.delete_existing') }}</span></label>
+    </div>
+    <button id="assignBtn" class="btn-primary" style="margin-top:12px">{{ t('assignment.assign') }}</button>
+  </div>
+
+  <!-- Current Bambuddy filament -> printer assignments -->
+  <div class="card page-assignments" id="currentAssignmentsCard">
+    <div style="display:flex;align-items:center;gap:10px">
+      <div class="section-title" style="flex:1">{{ t('assignments.title') }}</div>
+      <button id="refreshAssignmentsBtn" class="btn-secondary btn-small">{{ t('assignments.refresh') }}</button>
+    </div>
+    <div class="muted">{{ t('assignments.description') }}</div>
+    <div id="currentAssignmentsHint" class="hint"></div>
+    <div id="currentAssignmentsList"></div>
+  </div>
+
   <!-- Scan -->
-  <div class="card">
+  <div class="card page-add">
     <button id="startBtn" class="btn-secondary">{{ t('scan.scan_button') }}</button>
     <div id="videoWrap" class="hidden">
       <video id="video" playsinline></video>
@@ -134,7 +256,7 @@
   </div>
 
   <!-- Details form -->
-  <form id="form" class="card hidden">
+  <form id="form" class="card page-add hidden">
     <div style="font-weight:600;margin-bottom:4px">
       {{ t('form.title') }} <span id="srcBadge" class="badge"></span>
       <a id="forgetBtn" href="#" class="hidden" style="float:right;font-size:12px;color:var(--muted)">{{ t('form.forget') }}</a>
@@ -206,10 +328,16 @@
 // frontend i18next config uses).
 const I18N_LANG = {{ lang|tojson }};
 const I18N = {{ translations|tojson }};
+const I18N_EN = {{ translations_en|tojson }};
+const ACTIVE_PAGE = {{ page|tojson }};
 function t(key, vars){
   const parts = key.split('.');
   let v = I18N;
   for(const p of parts){ v = (v && typeof v==='object') ? v[p] : undefined; }
+  if(typeof v !== 'string'){
+    v = I18N_EN;
+    for(const p of parts){ v = (v && typeof v==='object') ? v[p] : undefined; }
+  }
   if(typeof v !== 'string') return key;
   if(vars) for(const k in vars) v = v.split('{'+k+'}').join(String(vars[k]));
   return v;
@@ -222,7 +350,7 @@ function tn(key, count, vars){
 }
 
 const $ = id => document.getElementById(id);
-let reader = null, currentBarcode = null;
+let reader = null, accessoryReader = null, currentBarcode = null;
 
 // Register the service worker (enables installable PWA). Needs https or localhost.
 if('serviceWorker' in navigator && window.isSecureContext){
@@ -324,7 +452,7 @@ async function loadOptions(){
   fillDatalist('colorList', OPTS.colors);
   setSelect('label_weight','1000');
 }
-loadOptions();
+if(ACTIVE_PAGE==='add') loadOptions();
 
 // Force-refresh the Open Filament Database + SpoolmanDB-Community.
 $('refreshDb').onclick = async () => {
@@ -451,6 +579,7 @@ function setScanHint(msg, isErr){
 
 // ── Scanning ──
 $('startBtn').onclick = async () => {
+  stopAccessoryScan();
   if(!window.ZXingBrowser){ toast(t('scan.scanner_lib_failed'), false); return; }
   if(!navigator.mediaDevices || !window.isSecureContext){
     setScanHint(t('scan.camera_needs_https'), true);
@@ -522,6 +651,470 @@ function stopScan(){
   $('stopBtn').classList.add('hidden');
 }
 $('stopBtn').onclick = stopScan;
+
+// ── Reusable-spool barcode scanner ──
+function stopAccessoryScan(prefix){
+  try{ accessoryReader && accessoryReader.reset && accessoryReader.reset(); }catch(e){}
+  accessoryReader=null;
+  for(const p of ['map','assign','printerMap']){
+    $(p+'VideoWrap').classList.add('hidden');
+    $(p+'ScanBtn').classList.remove('hidden');
+    $(p+'StopBtn').classList.add('hidden');
+  }
+}
+function reusableScanValue(result){
+  const raw=(result.getText()||'').trim();
+  if(!raw || raw.length>128) return null;
+  if(ZXingBrowser.BarcodeFormat && result.getBarcodeFormat()===ZXingBrowser.BarcodeFormat.UPC_E){
+    const expanded=expandUpcEToUpcA(raw);
+    return expanded && isValidUpcEanBarcode(expanded) ? expanded : null;
+  }
+  const gtin=extractGtinFromScan(raw);
+  if(gtin && isValidUpcEanBarcode(gtin)) return gtin;
+  // Reusable spool labels are user-defined, so Code 39, Code 128, and QR
+  // values do not need to be retail GTINs. Preserve the exact decoded value
+  // as the key.
+  return raw;
+}
+async function startAccessoryScan(prefix, inputId){
+  if(!window.ZXingBrowser){ toast(t('scan.scanner_lib_failed'), false); return; }
+  if(!navigator.mediaDevices || !window.isSecureContext){
+    $(prefix+'Hint').textContent=t('scan.camera_needs_https');
+    $(prefix+'Hint').classList.add('err'); return;
+  }
+  stopScan(); stopAccessoryScan();
+  try{
+    accessoryReader=new ZXingBrowser.BrowserMultiFormatReader();
+    if(ZXingBrowser.BarcodeFormat){
+      const F=ZXingBrowser.BarcodeFormat;
+      accessoryReader.hints.set(3,true);
+      accessoryReader.possibleFormats=[F.UPC_A,F.UPC_E,F.EAN_13,F.EAN_8,F.QR_CODE,F.CODE_39,F.CODE_128];
+    }
+    $(prefix+'VideoWrap').classList.remove('hidden');
+    $(prefix+'ScanBtn').classList.add('hidden');
+    $(prefix+'StopBtn').classList.remove('hidden');
+    $(prefix+'Hint').classList.remove('err');
+    $(prefix+'Hint').textContent=t('scan.align_barcode');
+    await accessoryReader.decodeFromVideoDevice(undefined,$(prefix+'Video'),result=>{
+      if(!result) return;
+      const value=reusableScanValue(result);
+      if(!value) return;
+      $(inputId).value=value;
+      $(prefix+'Hint').textContent='';
+      stopAccessoryScan(prefix);
+      if(prefix==='assign') assignmentBarcodeScanned(inputId);
+    });
+  }catch(e){
+    $(prefix+'Hint').textContent=t('scan.camera_error',{error:e});
+    $(prefix+'Hint').classList.add('err'); stopAccessoryScan(prefix);
+  }
+}
+$('mapScanBtn').onclick=()=>startAccessoryScan('map','mapBarcode');
+$('assignScanBtn').onclick=()=>startAccessoryScan('assign','assignBarcode');
+$('assignPrinterScanBtn').onclick=()=>startAccessoryScan('assign','assignPrinterBarcode');
+$('printerMapScanBtn').onclick=()=>startAccessoryScan('printerMap','printerMapBarcode');
+$('mapStopBtn').onclick=()=>stopAccessoryScan('map');
+$('assignStopBtn').onclick=()=>stopAccessoryScan('assign');
+$('printerMapStopBtn').onclick=()=>stopAccessoryScan('printerMap');
+
+// ── Reusable barcode mappings ──
+let trackedSpools=[], spoolMappings={};
+function spoolName(spool){
+  if(!spool) return t('mapping.unknown_spool');
+  return [spool.brand,spool.material,spool.color_name].filter(Boolean).join(' ')+' (#'+spool.id+')';
+}
+function mappingSpoolName(spool){
+  const grams=Number(spool&&spool.remaining_weight);
+  if(!Number.isFinite(grams)) return spoolName(spool);
+  const kilograms=(grams/1000).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:3});
+  return spoolName(spool)+' — '+kilograms+' kg';
+}
+function renderAssignSpools(){
+  const select=$('assignSpool'), selected=select.value;
+  select.innerHTML='';
+  const blank=document.createElement('option'); blank.value=''; blank.textContent=t('mapping.choose_spool'); select.appendChild(blank);
+  trackedSpools.forEach(spool=>{
+    const option=document.createElement('option'); option.value=String(spool.id); option.textContent=mappingSpoolName(spool); select.appendChild(option);
+  });
+  if(trackedSpools.some(spool=>String(spool.id)===selected)) select.value=selected;
+}
+async function jsonResponse(response){
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok || data.ok===false) throw new Error(data.error||('HTTP '+response.status));
+  return data;
+}
+function renderMappings(){
+  const select=$('mapSpool'), selected=select.value;
+  select.innerHTML='';
+  const blank=document.createElement('option'); blank.value=''; blank.textContent=t('mapping.choose_spool'); select.appendChild(blank);
+  trackedSpools.forEach(spool=>{
+    const option=document.createElement('option'); option.value=String(spool.id); option.textContent=mappingSpoolName(spool); select.appendChild(option);
+  });
+  if(trackedSpools.some(s=>String(s.id)===selected)) select.value=selected;
+  const list=$('mappingList'); list.innerHTML='';
+  if(!trackedSpools.length){ list.textContent=t('mapping.none'); list.className='mapping-list muted'; return; }
+  list.className='mapping-list';
+  trackedSpools.forEach(spool=>{
+    const row=document.createElement('div'); row.className='mapping-item';
+    const info=document.createElement('div'); info.style.flex='1';
+    const name=document.createElement('div'); name.textContent=mappingSpoolName(spool);
+    const code=document.createElement('div'); code.className='mapping-code'; code.textContent=spoolMappings[spool.id]||t('mapping.not_set');
+    info.append(name,code); row.appendChild(info);
+    const edit=document.createElement('button'); edit.className='btn-secondary btn-small'; edit.textContent=t('mapping.edit');
+    edit.onclick=()=>{ select.value=String(spool.id); $('mapBarcode').value=spoolMappings[spool.id]||''; $('mapBarcode').focus(); };
+    row.appendChild(edit);
+    if(spoolMappings[spool.id]){
+      const remove=document.createElement('button'); remove.className='btn-secondary btn-small'; remove.textContent=t('mapping.remove');
+      remove.onclick=async()=>{
+        try{ await jsonResponse(await fetch('/api/spool-barcodes/spool/'+spool.id,{method:'DELETE'})); toast(t('mapping.removed')); await loadMappings(); }
+        catch(e){ toast(e.message||t('mapping.save_failed'),false); }
+      };
+      row.appendChild(remove);
+    }
+    list.appendChild(row);
+  });
+}
+async function loadMappings(){
+  try{
+    const data=await jsonResponse(await fetch('/api/spool-barcodes'));
+    trackedSpools=data.spools||[]; spoolMappings={};
+    (data.mappings||[]).forEach(m=>{ spoolMappings[m.spool_id]=m.barcode; });
+    renderMappings(); renderAssignSpools();
+  }catch(e){ $('mapHint').textContent=t('mapping.load_failed')+': '+e.message; $('mapHint').classList.add('err'); }
+}
+$('mapSpool').onchange=()=>{ $('mapBarcode').value=spoolMappings[Number($('mapSpool').value)]||''; };
+$('mapSaveBtn').onclick=async()=>{
+  const spoolId=Number($('mapSpool').value), barcode=$('mapBarcode').value.trim();
+  if(!spoolId || !barcode){ $('mapHint').textContent=t('mapping.choose_spool'); $('mapHint').classList.add('err'); return; }
+  $('mapSaveBtn').disabled=true;
+  try{
+    const data=await jsonResponse(await fetch('/api/spool-barcodes',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({spool_id:spoolId,barcode})}));
+    toast(t('mapping.saved',{spool_id:data.spool_id})); $('mapHint').textContent=''; await loadMappings();
+  }catch(e){ toast(e.message||t('mapping.save_failed'),false); }
+  finally{ $('mapSaveBtn').disabled=false; }
+};
+$('mapBarcode').addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();$('mapSaveBtn').click();} });
+
+// ── Printer barcode mappings ──
+let allPrinters=[], printerMapSlots=[], printerMappings=[];
+function printerName(printerId){
+  const printer=allPrinters.find(item=>Number(item.id)===Number(printerId));
+  return printer ? printer.name+' (#'+printer.id+')' : 'Printer #'+printerId;
+}
+function printerTargetName(target){
+  return printerName(target.printer_id)+(target.ams_id==null?' — '+t('printer_mapping.printer_only'):' — '+(target.slot_label||('Slot '+(target.tray_id+1))));
+}
+function renderPrinterMappings(){
+  const list=$('printerMappingList'); list.innerHTML='';
+  if(!printerMappings.length){ list.textContent=t('printer_mapping.none'); list.className='mapping-list muted'; return; }
+  list.className='mapping-list';
+  printerMappings.forEach(mapping=>{
+    const row=document.createElement('div'); row.className='mapping-item';
+    const info=document.createElement('div'); info.style.flex='1';
+    const target=document.createElement('div'); target.textContent=printerTargetName(mapping);
+    const code=document.createElement('div'); code.className='mapping-code'; code.textContent=mapping.barcode;
+    info.append(target,code); row.appendChild(info);
+    const edit=document.createElement('button'); edit.className='btn-secondary btn-small'; edit.textContent=t('printer_mapping.edit');
+    edit.onclick=async()=>{
+      $('printerMapBarcode').value=mapping.barcode;
+      $('printerMapPrinter').value=String(mapping.printer_id);
+      await loadPrinterMapSlots();
+      if(mapping.ams_id!=null) $('printerMapSlot').value=mapping.ams_id+':'+mapping.tray_id;
+      $('printerMapBarcode').focus();
+    };
+    const remove=document.createElement('button'); remove.className='btn-secondary btn-small'; remove.textContent=t('printer_mapping.remove');
+    remove.onclick=async()=>{
+      try{
+        await jsonResponse(await fetch('/api/printer-barcodes/'+encodeURIComponent(mapping.barcode),{method:'DELETE'}));
+        toast(t('printer_mapping.removed')); await loadPrinterMappings();
+      }catch(e){ toast(e.message||t('printer_mapping.save_failed'),false); }
+    };
+    row.append(edit,remove); list.appendChild(row);
+  });
+}
+async function loadPrinterMappings(){
+  try{
+    const data=await jsonResponse(await fetch('/api/printer-barcodes'));
+    printerMappings=data.mappings||[]; renderPrinterMappings();
+  }catch(e){ $('printerMapHint').textContent=t('printer_mapping.load_failed')+': '+e.message; $('printerMapHint').classList.add('err'); }
+}
+async function loadPrinterMapSlots(){
+  const printerId=Number($('printerMapPrinter').value), select=$('printerMapSlot');
+  printerMapSlots=[]; select.innerHTML=''; select.disabled=true;
+  const printerOnly=document.createElement('option'); printerOnly.value=''; printerOnly.textContent=t('printer_mapping.printer_only'); select.appendChild(printerOnly);
+  if(!printerId) return;
+  try{
+    const data=await jsonResponse(await fetch('/api/printers/'+printerId+'/slots'));
+    printerMapSlots=data.slots||[];
+    printerMapSlots.forEach(slot=>{
+      const option=document.createElement('option'); option.value=slot.ams_id+':'+slot.tray_id; option.textContent=slot.label; select.appendChild(option);
+    });
+    select.disabled=false;
+    if(printerMapSlots.length===1) select.value=printerMapSlots[0].ams_id+':'+printerMapSlots[0].tray_id;
+  }catch(e){ $('printerMapHint').textContent=t('assignment.load_failed')+': '+e.message; $('printerMapHint').classList.add('err'); }
+}
+$('printerMapPrinter').onchange=loadPrinterMapSlots;
+$('printerMapSaveBtn').onclick=async()=>{
+  const barcode=$('printerMapBarcode').value.trim(), printerId=Number($('printerMapPrinter').value);
+  if(!barcode||!printerId){ $('printerMapHint').textContent=t('printer_mapping.missing_fields'); $('printerMapHint').classList.add('err'); return; }
+  const body={barcode,printer_id:printerId};
+  if($('printerMapSlot').value){
+    const [amsId,trayId]=$('printerMapSlot').value.split(':').map(Number);
+    const slot=printerMapSlots.find(item=>item.ams_id===amsId&&item.tray_id===trayId);
+    Object.assign(body,{ams_id:amsId,tray_id:trayId,slot_label:slot&&slot.label});
+  }
+  $('printerMapSaveBtn').disabled=true;
+  try{
+    await jsonResponse(await fetch('/api/printer-barcodes',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}));
+    toast(t('printer_mapping.saved')); $('printerMapHint').textContent=''; $('printerMapBarcode').value=''; await loadPrinterMappings();
+  }catch(e){ toast(e.message||t('printer_mapping.save_failed'),false); }
+  finally{ $('printerMapSaveBtn').disabled=false; }
+};
+$('printerMapBarcode').addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();$('printerMapSaveBtn').click();} });
+
+// ── Assign a spool using either a spool barcode or printer barcode ──
+let printerSlots=[], resolvedPrinterTarget=null, assignmentResolveTimer=null, assignmentResolvePromise=null;
+let assignmentStateVersion=0, slotLoadSequence=0;
+function clearAssignmentSlots(){
+  // Invalidate any printer/slot request that began before this scan/reset.
+  // Otherwise a slow response for the previous barcode can repopulate its
+  // occupied slot and reopen the deletion prompt after the form was cleared.
+  assignmentStateVersion++; slotLoadSequence++;
+  resolvedPrinterTarget=null; printerSlots=[];
+  $('assignPrinter').value=''; $('assignSlot').innerHTML=''; $('assignSlot').disabled=true;
+  $('assignSpool').value=''; $('existingChoice').classList.add('hidden');
+  $('assignHint').textContent=''; $('assignHint').classList.remove('err');
+}
+async function assignmentBarcodeScanned(inputId){
+  // A scan starts a fresh resolution pass. This prevents printer, slot,
+  // filament, and replacement choices from a previous scan being reused.
+  clearAssignmentSlots();
+  const mode=$('assignMode').value;
+  if(mode==='printer') await resolveAssignmentPrinter();
+  else if(mode==='both') await resolveCombinedAssignment();
+}
+function currentSlot(){
+  const [ams,tray]=($('assignSlot').value||'').split(':').map(Number);
+  if(!Number.isInteger(ams)||!Number.isInteger(tray)) return null;
+  return printerSlots.find(s=>s.ams_id===ams&&s.tray_id===tray)||{ams_id:ams,tray_id:tray};
+}
+function showExistingChoice(spool){
+  const box=$('existingChoice');
+  if(!spool || spool.empty){ box.classList.add('hidden'); return; }
+  const name=[spool.brand,spool.material,spool.color_name].filter(Boolean).join(' ');
+  $('existingMessage').textContent=t('assignment.existing_spool',{name:name||'Spool',spool_id:spool.id,remaining:Math.round(spool.remaining_weight)});
+  box.classList.remove('hidden');
+  box.querySelector('input[value="keep"]').checked=true;
+}
+async function loadSlots(fixedTarget=null){
+  const loadSequence=++slotLoadSequence;
+  const printerId=Number($('assignPrinter').value), select=$('assignSlot');
+  select.innerHTML=''; select.disabled=true; printerSlots=[]; $('existingChoice').classList.add('hidden');
+  const blank=document.createElement('option'); blank.value=''; blank.textContent=t('assignment.choose_slot'); select.appendChild(blank);
+  if(!printerId) return;
+  try{
+    const data=await jsonResponse(await fetch('/api/printers/'+printerId+'/slots'));
+    if(loadSequence!==slotLoadSequence) return false;
+    printerSlots=data.slots||[];
+    if(fixedTarget && fixedTarget.ams_id!=null && !printerSlots.some(slot=>slot.ams_id===fixedTarget.ams_id&&slot.tray_id===fixedTarget.tray_id)){
+      printerSlots.push({ams_id:fixedTarget.ams_id,tray_id:fixedTarget.tray_id,label:fixedTarget.slot_label||('Slot '+(fixedTarget.tray_id+1))});
+    }
+    printerSlots.forEach(slot=>{
+      const option=document.createElement('option'); option.value=slot.ams_id+':'+slot.tray_id;
+      option.textContent=slot.label+(slot.assignment?' — '+spoolName(slot.assignment.spool):''); select.appendChild(option);
+    });
+    select.disabled=!printerSlots.length || (($('assignMode').value==='printer'||$('assignMode').value==='both') && fixedTarget && fixedTarget.ams_id!=null);
+    if(!printerSlots.length) $('assignHint').textContent=t('assignment.no_slots');
+    else if(fixedTarget && fixedTarget.ams_id!=null){
+      select.value=fixedTarget.ams_id+':'+fixedTarget.tray_id;
+      const slot=currentSlot(); showExistingChoice(slot&&slot.assignment&&slot.assignment.spool);
+    }else if(printerSlots.length===1){ select.value=printerSlots[0].ams_id+':'+printerSlots[0].tray_id; showExistingChoice(printerSlots[0].assignment&&printerSlots[0].assignment.spool); }
+    return true;
+  }catch(e){
+    if(loadSequence!==slotLoadSequence) return false;
+    // A fixed barcode target is still assignable if live printer status is
+    // temporarily unavailable. Bambuddy's POST endpoint remains the source
+    // of truth, and will return the real error if the target is invalid.
+    if(fixedTarget && fixedTarget.ams_id!=null){
+      const slot={ams_id:fixedTarget.ams_id,tray_id:fixedTarget.tray_id,label:fixedTarget.slot_label||('Slot '+(fixedTarget.tray_id+1))};
+      printerSlots=[slot];
+      const option=document.createElement('option'); option.value=slot.ams_id+':'+slot.tray_id; option.textContent=slot.label; select.appendChild(option);
+      select.value=option.value; select.disabled=true;
+      return true;
+    }
+    $('assignHint').textContent=t('assignment.load_failed')+': '+e.message; $('assignHint').classList.add('err');
+    return false;
+  }
+}
+async function loadPrinters(){
+  try{
+    const data=await jsonResponse(await fetch('/api/printers'));
+    allPrinters=data.printers||[];
+    for(const id of ['assignPrinter','printerMapPrinter']){
+      const select=$(id), selected=select.value; select.innerHTML='';
+      const blank=document.createElement('option'); blank.value=''; blank.textContent=t('assignment.choose_printer'); select.appendChild(blank);
+      allPrinters.forEach(printer=>{ const option=document.createElement('option'); option.value=printer.id; option.textContent=printer.name+' (#'+printer.id+')'; select.appendChild(option); });
+      if(allPrinters.some(printer=>String(printer.id)===selected)) select.value=selected;
+    }
+    renderPrinterMappings();
+  }catch(e){ $('assignHint').textContent=t('assignment.load_failed')+': '+e.message; $('assignHint').classList.add('err'); }
+}
+async function resolveAssignmentPrinter(){
+  const mode=$('assignMode').value;
+  if(mode!=='printer' && mode!=='both') return;
+  const barcode=$(mode==='both'?'assignPrinterBarcode':'assignBarcode').value.trim();
+  const stateVersion=assignmentStateVersion;
+  resolvedPrinterTarget=null; $('assignPrinter').value=''; $('assignSlot').innerHTML=''; $('assignSlot').disabled=true;
+  if(!barcode) return;
+  const work=(async()=>{
+    try{
+      const data=await jsonResponse(await fetch('/api/printer-barcodes/resolve?barcode='+encodeURIComponent(barcode)));
+      if(stateVersion!==assignmentStateVersion || $(mode==='both'?'assignPrinterBarcode':'assignBarcode').value.trim()!==barcode || $('assignMode').value!==mode) return;
+      $('assignPrinter').value=String(data.target.printer_id);
+      const slotsLoaded=await loadSlots(data.target);
+      if(!slotsLoaded || stateVersion!==assignmentStateVersion || $(mode==='both'?'assignPrinterBarcode':'assignBarcode').value.trim()!==barcode || $('assignMode').value!==mode) return;
+      resolvedPrinterTarget=data.target;
+      $('assignHint').textContent=printerTargetName(data.target); $('assignHint').classList.remove('err');
+    }catch(e){
+      resolvedPrinterTarget=null;
+      $('assignHint').textContent=e.message||t('assignment.printer_not_mapped'); $('assignHint').classList.add('err');
+    }
+  })();
+  assignmentResolvePromise=work;
+  try{ await work; }
+  finally{ if(assignmentResolvePromise===work) assignmentResolvePromise=null; }
+}
+async function resolveCombinedAssignment(){
+  const spoolBarcode=$('assignBarcode').value.trim();
+  const spoolEntry=Object.entries(spoolMappings).find(([,code])=>code===spoolBarcode);
+  $('assignSpool').value=spoolEntry ? String(spoolEntry[0]) : '';
+  if(spoolBarcode && !spoolEntry){
+    $('assignHint').textContent=t('assignment.spool_not_mapped'); $('assignHint').classList.add('err');
+  }
+  if($('assignPrinterBarcode').value.trim()) await resolveAssignmentPrinter();
+}
+function setAssignmentMode(){
+  const mode=$('assignMode').value, printerMode=mode==='printer', bothMode=mode==='both';
+  $('assignBarcode').value=''; $('assignPrinterBarcode').value=''; clearAssignmentSlots();
+  $('assignSpoolWrap').classList.toggle('hidden',!printerMode);
+  $('assignPrinterBarcodeWrap').classList.toggle('hidden',!bothMode);
+  $('assignPrinter').disabled=printerMode||bothMode;
+  $('assignSlot').disabled=printerMode||bothMode;
+  $('assignmentDescription').textContent=t(bothMode?'assignment.both_description':(printerMode?'assignment.printer_description':'assignment.description'));
+  $('assignBarcodeLabel').textContent=t(printerMode?'assignment.printer_barcode':'assignment.barcode');
+  $('assignBarcode').placeholder=t(printerMode?'assignment.printer_barcode_placeholder':'assignment.barcode_placeholder');
+}
+$('assignMode').onchange=setAssignmentMode;
+$('assignPrinter').onchange=()=>{ if($('assignMode').value==='spool') loadSlots(); };
+$('assignSlot').onchange=()=>{ const slot=currentSlot(); showExistingChoice(slot&&slot.assignment&&slot.assignment.spool); };
+$('assignBtn').onclick=async()=>{
+  const mode=$('assignMode').value, spoolBarcode=$('assignBarcode').value.trim();
+  const barcode=mode==='both'?$('assignPrinterBarcode').value.trim():spoolBarcode;
+  if((mode==='printer'||mode==='both') && assignmentResolvePromise) await assignmentResolvePromise;
+  if((mode==='printer'||mode==='both') && !resolvedPrinterTarget) await resolveAssignmentPrinter();
+  const printerId=Number($('assignPrinter').value), slot=currentSlot(), spoolId=Number($('assignSpool').value);
+  if(!printerId||!slot||!barcode||((mode==='printer'||mode==='both')&&!spoolId)||(mode==='both'&&!spoolBarcode)){
+    $('assignHint').textContent=t(mode==='both'?'assignment.both_missing_fields':(mode==='printer'?'assignment.printer_missing_fields':'assignment.missing_fields')); $('assignHint').classList.add('err'); return;
+  }
+  const body={mode,barcode,printer_id:printerId,ams_id:slot.ams_id,tray_id:slot.tray_id};
+  if(mode==='printer') body.spool_id=spoolId;
+  if(mode==='both') Object.assign(body,{spool_barcode:spoolBarcode,printer_barcode:barcode});
+  if(!$('existingChoice').classList.contains('hidden')) body.delete_existing=document.querySelector('input[name="deleteExisting"]:checked').value==='delete';
+  $('assignBtn').disabled=true;
+  $('assignHint').textContent=t('assignment.assigning'); $('assignHint').classList.remove('err');
+  try{
+    const response=await fetch('/api/spool-assignment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const data=await response.json().catch(()=>({}));
+    if(response.status===409 && data.confirmation_required){ showExistingChoice(data.existing_spool); $('assignHint').textContent=t('assignment.choose_delete_option'); return; }
+    if(!response.ok||data.ok===false) throw new Error(data.error||('HTTP '+response.status));
+    const message=data.already_assigned?t('assignment.already_assigned'):(data.deleted_existing?t('assignment.deleted_and_assigned',{spool_id:data.spool_id}):t('assignment.assigned',{spool_id:data.spool_id}));
+    $('assignHint').textContent=message; $('assignHint').classList.remove('err'); toast(message); if(data.warning) toast(data.warning,false);
+    $('assignBarcode').value=''; $('assignPrinterBarcode').value=''; clearAssignmentSlots();
+    await loadMappings();
+  }catch(e){
+    const message=e.message||t('assignment.assign_failed');
+    $('assignHint').textContent=message; $('assignHint').classList.add('err'); toast(message,false);
+  }
+  finally{ $('assignBtn').disabled=false; }
+};
+$('assignBarcode').addEventListener('input',()=>{
+  const mode=$('assignMode').value;
+  if(mode==='printer'){
+    clearTimeout(assignmentResolveTimer); assignmentResolveTimer=setTimeout(()=>{clearAssignmentSlots();resolveAssignmentPrinter();},350);
+  }else if(mode==='both'){
+    clearTimeout(assignmentResolveTimer); assignmentResolveTimer=setTimeout(()=>{clearAssignmentSlots();resolveCombinedAssignment();},350);
+  }
+});
+$('assignPrinterBarcode').addEventListener('input',()=>{
+  if($('assignMode').value!=='both') return;
+  clearTimeout(assignmentResolveTimer); assignmentResolveTimer=setTimeout(()=>{clearAssignmentSlots();resolveCombinedAssignment();},350);
+});
+$('assignBarcode').addEventListener('keydown',e=>{
+  if(e.key!=='Enter') return; e.preventDefault();
+  const mode=$('assignMode').value;
+  if(mode==='printer') assignmentBarcodeScanned('assignBarcode');
+  else if(mode==='both') assignmentBarcodeScanned('assignBarcode');
+  else { clearAssignmentSlots(); $('assignBtn').click(); }
+});
+$('assignPrinterBarcode').addEventListener('keydown',e=>{
+  if(e.key!=='Enter') return; e.preventDefault(); assignmentBarcodeScanned('assignPrinterBarcode');
+});
+setAssignmentMode();
+if(ACTIVE_PAGE==='spools' || ACTIVE_PAGE==='assign') loadMappings();
+if(ACTIVE_PAGE==='printers' || ACTIVE_PAGE==='assign') loadPrinters().then(()=>{
+  if(ACTIVE_PAGE==='printers') loadPrinterMappings();
+});
+
+// ── Current filament-to-printer assignments ──
+function assignmentSpoolName(assignment){
+  const spool=assignment.spool;
+  if(!spool) return t('assignments.unknown_spool',{spool_id:assignment.spool_id});
+  const details=[spool.brand,spool.material,spool.color_name].filter(Boolean).join(' ');
+  return details ? details+' (#'+assignment.spool_id+')' : t('assignments.unknown_spool',{spool_id:assignment.spool_id});
+}
+function renderCurrentAssignments(assignments){
+  const list=$('currentAssignmentsList'); list.innerHTML='';
+  if(!assignments.length){
+    list.className='muted'; list.style.marginTop='12px'; list.textContent=t('assignments.none'); return;
+  }
+  list.className=''; list.style.marginTop='';
+  let group=null, groupKey=null;
+  assignments.forEach(assignment=>{
+    const key=String(assignment.printer_id);
+    if(key!==groupKey){
+      groupKey=key; group=document.createElement('div'); group.className='assignment-group';
+      const heading=document.createElement('div'); heading.className='assignment-printer';
+      heading.textContent=(assignment.printer_name||('Printer '+assignment.printer_id))+' (#'+assignment.printer_id+')';
+      group.appendChild(heading); list.appendChild(group);
+    }
+    const row=document.createElement('div'); row.className='mapping-item';
+    const info=document.createElement('div'); info.style.flex='1';
+    const slot=document.createElement('div'); slot.className='assignment-slot'; slot.textContent=assignment.slot_label;
+    const name=document.createElement('div'); name.textContent=assignmentSpoolName(assignment);
+    info.append(slot,name);
+    if(assignment.spool){
+      const weight=document.createElement('div'); weight.className='muted';
+      weight.textContent=t('assignments.remaining',{kg:(assignment.spool.remaining_weight/1000).toFixed(3)});
+      info.appendChild(weight);
+    }
+    if(assignment.pending_config){
+      const pending=document.createElement('div'); pending.className='hint'; pending.textContent=t('assignments.pending'); info.appendChild(pending);
+    }
+    row.appendChild(info); group.appendChild(row);
+  });
+}
+async function loadCurrentAssignments(){
+  const button=$('refreshAssignmentsBtn'), hint=$('currentAssignmentsHint');
+  button.disabled=true; hint.textContent=t('assignments.loading'); hint.classList.remove('err');
+  try{
+    const data=await jsonResponse(await fetch('/api/assignments'));
+    renderCurrentAssignments(data.assignments||[]); hint.textContent='';
+  }catch(e){
+    $('currentAssignmentsList').innerHTML=''; hint.textContent=t('assignments.load_failed')+': '+e.message; hint.classList.add('err');
+  }finally{ button.disabled=false; }
+}
+$('refreshAssignmentsBtn').onclick=loadCurrentAssignments;
+if(ACTIVE_PAGE==='assignments') loadCurrentAssignments();
 $('lookupBtn').onclick = () => {
   const raw = $('manual').value.trim();
   if(!raw) return;
