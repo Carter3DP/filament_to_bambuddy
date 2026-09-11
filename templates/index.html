@@ -874,7 +874,12 @@ $('printerMapBarcode').addEventListener('keydown',e=>{ if(e.key==='Enter'){e.pre
 
 // ── Assign a spool using either a spool barcode or printer barcode ──
 let printerSlots=[], resolvedPrinterTarget=null, assignmentResolveTimer=null, assignmentResolvePromise=null;
+let assignmentStateVersion=0, slotLoadSequence=0;
 function clearAssignmentSlots(){
+  // Invalidate any printer/slot request that began before this scan/reset.
+  // Otherwise a slow response for the previous barcode can repopulate its
+  // occupied slot and reopen the deletion prompt after the form was cleared.
+  assignmentStateVersion++; slotLoadSequence++;
   resolvedPrinterTarget=null; printerSlots=[];
   $('assignPrinter').value=''; $('assignSlot').innerHTML=''; $('assignSlot').disabled=true;
   $('assignSpool').value=''; $('existingChoice').classList.add('hidden');
@@ -902,12 +907,14 @@ function showExistingChoice(spool){
   box.querySelector('input[value="keep"]').checked=true;
 }
 async function loadSlots(fixedTarget=null){
+  const loadSequence=++slotLoadSequence;
   const printerId=Number($('assignPrinter').value), select=$('assignSlot');
   select.innerHTML=''; select.disabled=true; printerSlots=[]; $('existingChoice').classList.add('hidden');
   const blank=document.createElement('option'); blank.value=''; blank.textContent=t('assignment.choose_slot'); select.appendChild(blank);
   if(!printerId) return;
   try{
     const data=await jsonResponse(await fetch('/api/printers/'+printerId+'/slots'));
+    if(loadSequence!==slotLoadSequence) return false;
     printerSlots=data.slots||[];
     if(fixedTarget && fixedTarget.ams_id!=null && !printerSlots.some(slot=>slot.ams_id===fixedTarget.ams_id&&slot.tray_id===fixedTarget.tray_id)){
       printerSlots.push({ams_id:fixedTarget.ams_id,tray_id:fixedTarget.tray_id,label:fixedTarget.slot_label||('Slot '+(fixedTarget.tray_id+1))});
@@ -922,7 +929,9 @@ async function loadSlots(fixedTarget=null){
       select.value=fixedTarget.ams_id+':'+fixedTarget.tray_id;
       const slot=currentSlot(); showExistingChoice(slot&&slot.assignment&&slot.assignment.spool);
     }else if(printerSlots.length===1){ select.value=printerSlots[0].ams_id+':'+printerSlots[0].tray_id; showExistingChoice(printerSlots[0].assignment&&printerSlots[0].assignment.spool); }
+    return true;
   }catch(e){
+    if(loadSequence!==slotLoadSequence) return false;
     // A fixed barcode target is still assignable if live printer status is
     // temporarily unavailable. Bambuddy's POST endpoint remains the source
     // of truth, and will return the real error if the target is invalid.
@@ -931,9 +940,10 @@ async function loadSlots(fixedTarget=null){
       printerSlots=[slot];
       const option=document.createElement('option'); option.value=slot.ams_id+':'+slot.tray_id; option.textContent=slot.label; select.appendChild(option);
       select.value=option.value; select.disabled=true;
-      return;
+      return true;
     }
     $('assignHint').textContent=t('assignment.load_failed')+': '+e.message; $('assignHint').classList.add('err');
+    return false;
   }
 }
 async function loadPrinters(){
@@ -953,15 +963,16 @@ async function resolveAssignmentPrinter(){
   const mode=$('assignMode').value;
   if(mode!=='printer' && mode!=='both') return;
   const barcode=$(mode==='both'?'assignPrinterBarcode':'assignBarcode').value.trim();
+  const stateVersion=assignmentStateVersion;
   resolvedPrinterTarget=null; $('assignPrinter').value=''; $('assignSlot').innerHTML=''; $('assignSlot').disabled=true;
   if(!barcode) return;
   const work=(async()=>{
     try{
       const data=await jsonResponse(await fetch('/api/printer-barcodes/resolve?barcode='+encodeURIComponent(barcode)));
-      if($(mode==='both'?'assignPrinterBarcode':'assignBarcode').value.trim()!==barcode || $('assignMode').value!==mode) return;
+      if(stateVersion!==assignmentStateVersion || $(mode==='both'?'assignPrinterBarcode':'assignBarcode').value.trim()!==barcode || $('assignMode').value!==mode) return;
       $('assignPrinter').value=String(data.target.printer_id);
-      await loadSlots(data.target);
-      if($(mode==='both'?'assignPrinterBarcode':'assignBarcode').value.trim()!==barcode || $('assignMode').value!==mode) return;
+      const slotsLoaded=await loadSlots(data.target);
+      if(!slotsLoaded || stateVersion!==assignmentStateVersion || $(mode==='both'?'assignPrinterBarcode':'assignBarcode').value.trim()!==barcode || $('assignMode').value!==mode) return;
       resolvedPrinterTarget=data.target;
       $('assignHint').textContent=printerTargetName(data.target); $('assignHint').classList.remove('err');
     }catch(e){
