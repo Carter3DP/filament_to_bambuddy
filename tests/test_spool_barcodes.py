@@ -257,6 +257,9 @@ def test_assignment_scans_clear_previous_slot_state(client):
     assert '<option value="both">Spool + Printer barcode</option>' in html
     assert "function clearAssignmentSlots()" in html
     assert "if(prefix==='assign') assignmentBarcodeScanned(inputId);" in html
+    assert "assignmentStateVersion++; slotLoadSequence++;" in html
+    assert "if(loadSequence!==slotLoadSequence) return false;" in html
+    assert "stateVersion!==assignmentStateVersion" in html
 
 
 def test_printer_slots_include_ams_and_external_assignments(client):
