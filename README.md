@@ -51,40 +51,7 @@ The lookup also **learns**: whatever you confirm is remembered for that code
 them — the same barcode, a sibling package size, or the manufacturer SKU —
 auto-fills instantly next time. *(Scope: new, unopened spools still in the box.)*
 
-Several additional sections have been added to allow for full filament control outside of the Bambuddy app. These new sections have two types of tracked bar codes: reusable spool bar codes and printer bar codes.  
-  
-Reusable spool barcodes are intended to be applied to a spool of filament that you added in the previous section.  
-This is referred as barcode->filament.  
-  
-Printer barcodes are intended to be applied to a printer and a slot. EG. if you had an AMS unit you can make 4 barcodes, one for each AMS slot.  
-This is referred as barcode->printer.  
-
-Spool Barcodes (barcode->filament):
-1. Under "Tracked Spool" set which filament you want to assign a bar code to.
-2. Under "Reusable Spool Barcode" scan or manually enter the barcode. Supported barcodes: Code 39, UPC-A, UPC-E, EAN-8, EAN-13, Code 128, QR Code
-  
-Printer Barcodes(barcode->printer):
-1. Under "Printer Barcode" scan or manually enter the barcode. Supported barcodes: Code 39, UPC-A, UPC-E, EAN-8, EAN-13, Code 128, QR Code
-2. Next choose a printer and slot to assign to the barcode. The slot is the External spool holder on the printer or an AMS slot if an AMS is connected to your printer.
-  
-Assign Spool:  
-There are several different modes for assigning Filament->Printer.  
--Spool Barcode:  
-1. Select printer under the "Printer" drop down and select the AMS slot or external spool to assign filament to.
-2. Scan or manually enter the barcode that your filament is assigned to. (Your barcode must be assigned to a spool of filament  
-(barcode->filament) before this is done!) Supported barcodes: Code 39, UPC-A, UPC-E, EAN-8, EAN-13, Code 128, QR Code
-  
--Printer Barcode:  
-1. Scan or manually enter the barcode that your printer is assigned to. (Your barcode must be assigned to a printer and slot  
-(barcode->printer) before this is done!) Supported barcodes: Code 39, UPC-A, UPC-E, EAN-8, EAN-13, Code 128, QR Code
-2. Choose the spool of filament that you want to assign from the "Tracked filament spool" dropdown.
-  
--Spool + Printer Barcode:  
-1. Scan or manually enter the barcode that your spool is assigned to. Supported barcodes: Code 39, UPC-A, UPC-E, EAN-8, EAN-13, Code 128, QR Code
-2. Scan or manually enter the barcode that your printer is assigned to. Supported barcodes: Code 39, UPC-A, UPC-E, EAN-8, EAN-13, Code 128, QR Code
-
-
-> **Tested with** Bambuddy v0.2.4.8. Requires **Python 3.10+**.
+> **Tested with** Bambuddy v1.2.5.5. Requires **Python 3.10+**.
 
 ---
 
