@@ -338,12 +338,16 @@ def test_spool_and_printer_barcode_mode_requires_mapped_codes(client):
     assert result.get_json()["error"] == "This barcode is not linked to a printer"
 
 
-def test_assignment_scans_clear_previous_slot_state(client):
+def test_assignment_scans_only_reset_fields_owned_by_scanned_barcode(client):
     html = client.get("/assign-spool").get_data(as_text=True)
 
     assert '<option value="both">Spool + Printer barcode</option>' in html
-    assert "function clearAssignmentSlots()" in html
+    assert "function clearAssignmentPrinterTarget()" in html
+    assert "function clearAssignmentSpoolSelection()" in html
     assert "if(prefix==='assign') assignmentBarcodeScanned(inputId);" in html
+    assert "mode==='both' && inputId==='assignPrinterBarcode'" in html
+    assert "clearAssignmentPrinterTarget(); await resolveAssignmentPrinter();" in html
+    assert "resolveCombinedSpool();" in html
     assert "assignmentStateVersion++; slotLoadSequence++;" in html
     assert "if(loadSequence!==slotLoadSequence) return false;" in html
     assert "stateVersion!==assignmentStateVersion" in html
