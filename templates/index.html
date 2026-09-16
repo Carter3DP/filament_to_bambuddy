@@ -148,7 +148,7 @@
     <input id="mapRemainingWeight" type="number" min="0" step="1" inputmode="decimal" placeholder="{{ t('mapping.remaining_weight_placeholder') }}">
     <div class="row" style="margin-top:10px">
       <div><button id="mapScanBtn" class="btn-secondary">{{ t('mapping.scan') }}</button></div>
-      <div><button id="mapSaveBtn" class="btn-primary">{{ t('mapping.save') }}</button></div>
+      <div><button id="mapSaveBtn" class="btn-primary">{{ t('mapping.save_changes') }}</button></div>
     </div>
     <div id="mapVideoWrap" class="hidden" style="margin-top:10px">
       <video id="mapVideo" playsinline></video>
@@ -807,14 +807,14 @@ $('mapSpool').onchange=()=>setMappingInputs($('mapSpool').value);
 $('mapSaveBtn').onclick=async()=>{
   const spoolId=Number($('mapSpool').value), barcode=$('mapBarcode').value.trim();
   const remainingText=$('mapRemainingWeight').value.trim(), remainingWeight=Number(remainingText);
-  if(!spoolId || !barcode){ $('mapHint').textContent=t('mapping.choose_spool'); $('mapHint').classList.add('err'); return; }
+  if(!spoolId){ $('mapHint').textContent=t('mapping.choose_spool'); $('mapHint').classList.add('err'); return; }
   if(!remainingText || !Number.isFinite(remainingWeight) || remainingWeight<0){
     $('mapHint').textContent=t('mapping.invalid_remaining_weight'); $('mapHint').classList.add('err'); return;
   }
   $('mapSaveBtn').disabled=true;
   try{
     const data=await jsonResponse(await fetch('/api/spool-barcodes',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({spool_id:spoolId,barcode,remaining_weight:remainingWeight})}));
-    toast(t('mapping.saved',{spool_id:data.spool_id})); $('mapHint').textContent=''; await loadMappings();
+    toast(t('mapping.changes_saved',{spool_id:data.spool_id})); $('mapHint').textContent=''; await loadMappings();
   }catch(e){ toast(e.message||t('mapping.save_failed'),false); }
   finally{ $('mapSaveBtn').disabled=false; }
 };
