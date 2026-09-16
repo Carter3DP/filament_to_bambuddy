@@ -144,6 +144,8 @@
     <select id="mapSpool"></select>
     <label for="mapBarcode">{{ t('mapping.barcode') }}</label>
     <input id="mapBarcode" autocomplete="off" placeholder="{{ t('mapping.barcode_placeholder') }}">
+    <label for="mapRemainingWeight">{{ t('mapping.remaining_weight') }}</label>
+    <input id="mapRemainingWeight" type="number" min="0" step="1" inputmode="decimal" placeholder="{{ t('mapping.remaining_weight_placeholder') }}">
     <div class="row" style="margin-top:10px">
       <div><button id="mapScanBtn" class="btn-secondary">{{ t('mapping.scan') }}</button></div>
       <div><button id="mapSaveBtn" class="btn-primary">{{ t('mapping.save') }}</button></div>
@@ -653,7 +655,9 @@ function stopScan(){
 $('stopBtn').onclick = stopScan;
 
 // ── Reusable-spool barcode scanner ──
+let accessoryScanSession=0;
 function stopAccessoryScan(prefix){
+  accessoryScanSession++;
   try{ accessoryReader && accessoryReader.reset && accessoryReader.reset(); }catch(e){}
   accessoryReader=null;
   for(const p of ['map','assign','printerMap']){
@@ -683,6 +687,7 @@ async function startAccessoryScan(prefix, inputId){
     $(prefix+'Hint').classList.add('err'); return;
   }
   stopScan(); stopAccessoryScan();
+  const scanSession=++accessoryScanSession;
   try{
     accessoryReader=new ZXingBrowser.BrowserMultiFormatReader();
     if(ZXingBrowser.BarcodeFormat){
@@ -696,6 +701,9 @@ async function startAccessoryScan(prefix, inputId){
     $(prefix+'Hint').classList.remove('err');
     $(prefix+'Hint').textContent=t('scan.align_barcode');
     await accessoryReader.decodeFromVideoDevice(undefined,$(prefix+'Video'),result=>{
+      // ZXing may deliver a queued frame after reset(). Ignore that frame if
+      // the user has already switched to the other combined-mode barcode.
+      if(scanSession!==accessoryScanSession) return;
       if(!result) return;
       const value=reusableScanValue(result);
       if(!value) return;
@@ -729,6 +737,12 @@ function mappingSpoolName(spool){
   const kilograms=(grams/1000).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:3});
   return spoolName(spool)+' — '+kilograms+' kg';
 }
+function setMappingInputs(spoolId){
+  const spool=trackedSpools.find(item=>Number(item.id)===Number(spoolId));
+  $('mapBarcode').value=spoolMappings[Number(spoolId)]||'';
+  $('mapRemainingWeight').value=spool&&Number.isFinite(Number(spool.remaining_weight))
+    ? String(Math.round(Number(spool.remaining_weight)*1000)/1000) : '';
+}
 function renderAssignSpools(){
   const select=$('assignSpool'), selected=select.value;
   select.innerHTML='';
@@ -761,7 +775,7 @@ function renderMappings(){
     const code=document.createElement('div'); code.className='mapping-code'; code.textContent=spoolMappings[spool.id]||t('mapping.not_set');
     info.append(name,code); row.appendChild(info);
     const edit=document.createElement('button'); edit.className='btn-secondary btn-small'; edit.textContent=t('mapping.edit');
-    edit.onclick=()=>{ select.value=String(spool.id); $('mapBarcode').value=spoolMappings[spool.id]||''; $('mapBarcode').focus(); };
+    edit.onclick=()=>{ select.value=String(spool.id); setMappingInputs(spool.id); $('mapBarcode').focus(); };
     row.appendChild(edit);
     if(spoolMappings[spool.id]){
       const remove=document.createElement('button'); remove.className='btn-secondary btn-small'; remove.textContent=t('mapping.remove');
@@ -782,13 +796,17 @@ async function loadMappings(){
     renderMappings(); renderAssignSpools();
   }catch(e){ $('mapHint').textContent=t('mapping.load_failed')+': '+e.message; $('mapHint').classList.add('err'); }
 }
-$('mapSpool').onchange=()=>{ $('mapBarcode').value=spoolMappings[Number($('mapSpool').value)]||''; };
+$('mapSpool').onchange=()=>setMappingInputs($('mapSpool').value);
 $('mapSaveBtn').onclick=async()=>{
   const spoolId=Number($('mapSpool').value), barcode=$('mapBarcode').value.trim();
+  const remainingText=$('mapRemainingWeight').value.trim(), remainingWeight=Number(remainingText);
   if(!spoolId || !barcode){ $('mapHint').textContent=t('mapping.choose_spool'); $('mapHint').classList.add('err'); return; }
+  if(!remainingText || !Number.isFinite(remainingWeight) || remainingWeight<0){
+    $('mapHint').textContent=t('mapping.invalid_remaining_weight'); $('mapHint').classList.add('err'); return;
+  }
   $('mapSaveBtn').disabled=true;
   try{
-    const data=await jsonResponse(await fetch('/api/spool-barcodes',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({spool_id:spoolId,barcode})}));
+    const data=await jsonResponse(await fetch('/api/spool-barcodes',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({spool_id:spoolId,barcode,remaining_weight:remainingWeight})}));
     toast(t('mapping.saved',{spool_id:data.spool_id})); $('mapHint').textContent=''; await loadMappings();
   }catch(e){ toast(e.message||t('mapping.save_failed'),false); }
   finally{ $('mapSaveBtn').disabled=false; }
