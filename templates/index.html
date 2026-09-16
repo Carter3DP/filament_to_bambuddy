@@ -195,6 +195,8 @@
     <div id="assignSpoolWrap" class="hidden">
       <label for="assignSpool">{{ t('assignment.filament') }}</label>
       <select id="assignSpool"></select>
+      <label for="assignRemainingWeight">{{ t('assignment.remaining_weight') }}</label>
+      <input id="assignRemainingWeight" type="number" min="0" step="1" inputmode="decimal" placeholder="{{ t('assignment.remaining_weight_placeholder') }}">
     </div>
     <label for="assignBarcode" id="assignBarcodeLabel">{{ t('assignment.barcode') }}</label>
     <input id="assignBarcode" autocomplete="off" placeholder="{{ t('assignment.barcode_placeholder') }}">
@@ -752,6 +754,11 @@ function renderAssignSpools(){
   });
   if(trackedSpools.some(spool=>String(spool.id)===selected)) select.value=selected;
 }
+function setAssignmentRemainingWeight(){
+  const spool=trackedSpools.find(item=>Number(item.id)===Number($('assignSpool').value));
+  $('assignRemainingWeight').value=spool&&Number.isFinite(Number(spool.remaining_weight))
+    ? String(Math.round(Number(spool.remaining_weight)*1000)/1000) : '';
+}
 async function jsonResponse(response){
   const data=await response.json().catch(()=>({}));
   if(!response.ok || data.ok===false) throw new Error(data.error||('HTTP '+response.status));
@@ -900,7 +907,7 @@ function clearAssignmentSlots(){
   assignmentStateVersion++; slotLoadSequence++;
   resolvedPrinterTarget=null; printerSlots=[];
   $('assignPrinter').value=''; $('assignSlot').innerHTML=''; $('assignSlot').disabled=true;
-  $('assignSpool').value=''; $('existingChoice').classList.add('hidden');
+  $('assignSpool').value=''; $('assignRemainingWeight').value=''; $('existingChoice').classList.add('hidden');
   $('assignHint').textContent=''; $('assignHint').classList.remove('err');
 }
 async function assignmentBarcodeScanned(inputId){
@@ -1025,6 +1032,7 @@ function setAssignmentMode(){
 $('assignMode').onchange=setAssignmentMode;
 $('assignPrinter').onchange=()=>{ if($('assignMode').value==='spool') loadSlots(); };
 $('assignSlot').onchange=()=>{ const slot=currentSlot(); showExistingChoice(slot&&slot.assignment&&slot.assignment.spool); };
+$('assignSpool').onchange=setAssignmentRemainingWeight;
 $('assignBtn').onclick=async()=>{
   const mode=$('assignMode').value, spoolBarcode=$('assignBarcode').value.trim();
   const barcode=mode==='both'?$('assignPrinterBarcode').value.trim():spoolBarcode;
@@ -1034,8 +1042,12 @@ $('assignBtn').onclick=async()=>{
   if(!printerId||!slot||!barcode||((mode==='printer'||mode==='both')&&!spoolId)||(mode==='both'&&!spoolBarcode)){
     $('assignHint').textContent=t(mode==='both'?'assignment.both_missing_fields':(mode==='printer'?'assignment.printer_missing_fields':'assignment.missing_fields')); $('assignHint').classList.add('err'); return;
   }
+  const remainingText=$('assignRemainingWeight').value.trim(), remainingWeight=Number(remainingText);
+  if(mode==='printer' && (!remainingText || !Number.isFinite(remainingWeight) || remainingWeight<0)){
+    $('assignHint').textContent=t('assignment.invalid_remaining_weight'); $('assignHint').classList.add('err'); return;
+  }
   const body={mode,barcode,printer_id:printerId,ams_id:slot.ams_id,tray_id:slot.tray_id};
-  if(mode==='printer') body.spool_id=spoolId;
+  if(mode==='printer') Object.assign(body,{spool_id:spoolId,remaining_weight:remainingWeight});
   if(mode==='both') Object.assign(body,{spool_barcode:spoolBarcode,printer_barcode:barcode});
   if(!$('existingChoice').classList.contains('hidden')) body.delete_existing=document.querySelector('input[name="deleteExisting"]:checked').value==='delete';
   $('assignBtn').disabled=true;
