@@ -85,6 +85,24 @@ def test_mapping_save_updates_remaining_filament_weight(client):
     assert patch_spool.call_args.args[0].endswith("/api/v1/inventory/spools/12")
 
 
+def test_mapping_save_updates_weight_without_requiring_spool_barcode(client):
+    app_module.save_spool_barcodes({"OTHER-SPOOL": 99})
+    current = spool(12, label_weight=1000, weight_used=100)
+    with (
+        patch("app.requests.get", return_value=response(payload=current)),
+        patch("app.requests.patch", return_value=response(payload={**current, "weight_used": 400})) as patch_spool,
+    ):
+        result = client.put("/api/spool-barcodes", json={
+            "spool_id": 12, "remaining_weight": 600,
+        })
+
+    assert result.status_code == 200
+    assert result.get_json()["barcode"] == ""
+    assert result.get_json()["weight_updated"] is True
+    assert patch_spool.call_args.kwargs["json"] == {"weight_used": 400.0}
+    assert app_module.load_spool_barcodes() == {"OTHER-SPOOL": 99}
+
+
 def test_mapping_save_does_not_rewrite_unchanged_weight(client):
     with (
         patch("app.requests.get", return_value=response(payload=spool(12, weight_used=275))),
