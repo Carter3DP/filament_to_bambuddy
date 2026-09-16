@@ -965,14 +965,55 @@ def assign_spool_by_barcode():
         existing_spool_id = int(existing_spool_id)
     except (TypeError, ValueError):
         existing_spool_id = None
-    if existing and existing_spool_id == spool_id:
-        return jsonify(ok=True, already_assigned=True, spool_id=spool_id,
-                       assignment=existing, deleted_existing=False)
+    already_assigned = bool(existing and existing_spool_id == spool_id)
 
     delete_choice = body.get("delete_existing")
-    if old_spool and not old_spool["empty"] and delete_choice is None:
+    if not already_assigned and old_spool and not old_spool["empty"] and delete_choice is None:
         return jsonify(ok=False, confirmation_required=True, existing_spool=old_spool), 409
-    delete_old = bool(old_spool and (old_spool["empty"] or delete_choice is True))
+    delete_old = bool(not already_assigned and old_spool and
+                      (old_spool["empty"] or delete_choice is True))
+
+    remaining_raw = body.get("remaining_weight")
+    try:
+        remaining_weight = float(remaining_raw) if remaining_raw is not None else None
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error="Remaining weight must be a number in grams"), 400
+    if remaining_weight is not None and remaining_weight < 0:
+        return jsonify(ok=False, error="Remaining weight cannot be negative"), 400
+
+    weight_updated = False
+    if remaining_weight is not None:
+        try:
+            spool_response = requests.get(
+                f"{BAMBUDDY_URL}/api/v1/inventory/spools/{spool_id}",
+                headers=_bambuddy_headers(), timeout=15,
+            )
+        except requests.RequestException as exc:
+            return jsonify(ok=False, error=str(exc)), 502
+        if not spool_response.ok:
+            return jsonify(ok=False, error=_bambuddy_error(spool_response)), spool_response.status_code
+        selected_spool = spool_response.json() or {}
+        label_weight = float(selected_spool.get("label_weight") or 0)
+        if remaining_weight > label_weight:
+            return jsonify(ok=False, error=f"Remaining weight cannot exceed {label_weight:g} g"), 400
+        current_remaining = max(0.0, label_weight - float(selected_spool.get("weight_used") or 0))
+        weight_updated = abs(remaining_weight - current_remaining) > 0.001
+        if weight_updated:
+            try:
+                weight_response = requests.patch(
+                    f"{BAMBUDDY_URL}/api/v1/inventory/spools/{spool_id}",
+                    headers=_bambuddy_headers(json_body=True),
+                    json={"weight_used": label_weight - remaining_weight}, timeout=15,
+                )
+            except requests.RequestException as exc:
+                return jsonify(ok=False, error=str(exc)), 502
+            if not weight_response.ok:
+                return jsonify(ok=False, error=_bambuddy_error(weight_response)), weight_response.status_code
+
+    if already_assigned:
+        return jsonify(ok=True, already_assigned=True, spool_id=spool_id,
+                       assignment=existing, deleted_existing=False,
+                       weight_updated=weight_updated)
 
     payload = {"spool_id": spool_id, "printer_id": printer_id,
                "ams_id": ams_id, "tray_id": tray_id}
@@ -1008,7 +1049,8 @@ def assign_spool_by_barcode():
             warning = f"Spool assigned, but old spool could not be deleted: {exc}"
 
     return jsonify(ok=True, spool_id=spool_id, assignment=assignment_response.json(),
-                   deleted_existing=deleted_existing, warning=warning)
+                   deleted_existing=deleted_existing, warning=warning,
+                   weight_updated=weight_updated)
 
 
 @app.get("/api/health")
