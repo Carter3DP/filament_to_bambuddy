@@ -598,8 +598,8 @@ def set_spool_barcode():
         spool_id = int(body.get("spool_id"))
     except (TypeError, ValueError):
         return jsonify(ok=False, error="A valid spool_id is required"), 400
-    if not barcode or len(barcode) > 128:
-        return jsonify(ok=False, error="Barcode must contain 1 to 128 characters"), 400
+    if len(barcode) > 128:
+        return jsonify(ok=False, error="Barcode must contain no more than 128 characters"), 400
     remaining_raw = body.get("remaining_weight")
     try:
         remaining_weight = float(remaining_raw) if remaining_raw is not None else None
@@ -607,6 +607,8 @@ def set_spool_barcode():
         return jsonify(ok=False, error="Remaining weight must be a number in grams"), 400
     if remaining_weight is not None and remaining_weight < 0:
         return jsonify(ok=False, error="Remaining weight cannot be negative"), 400
+    if not barcode and remaining_weight is None:
+        return jsonify(ok=False, error="A barcode or remaining weight is required"), 400
 
     try:
         response = requests.get(
@@ -625,10 +627,11 @@ def set_spool_barcode():
     if remaining_weight is not None and remaining_weight > label_weight:
         return jsonify(ok=False, error=f"Remaining weight cannot exceed {label_weight:g} g"), 400
 
-    mapping = load_spool_barcodes()
-    owner = mapping.get(barcode)
-    if owner is not None and owner != spool_id:
-        return jsonify(ok=False, error=f"That barcode is already assigned to spool #{owner}"), 409
+    if barcode:
+        mapping = load_spool_barcodes()
+        owner = mapping.get(barcode)
+        if owner is not None and owner != spool_id:
+            return jsonify(ok=False, error=f"That barcode is already assigned to spool #{owner}"), 409
 
     current_remaining = max(0.0, label_weight - float(spool.get("weight_used") or 0))
     weight_updated = remaining_weight is not None and abs(remaining_weight - current_remaining) > 0.001
@@ -644,16 +647,18 @@ def set_spool_barcode():
         if not update_response.ok:
             return jsonify(ok=False, error=_bambuddy_error(update_response)), update_response.status_code
 
-    with _spool_barcode_lock:
-        mapping = load_spool_barcodes()
-        owner = mapping.get(barcode)
-        if owner is not None and owner != spool_id:
-            return jsonify(ok=False, error=f"That barcode is already assigned to spool #{owner}"), 409
-        replaced = [code for code, sid in mapping.items() if sid == spool_id and code != barcode]
-        for code in replaced:
-            del mapping[code]
-        mapping[barcode] = spool_id
-        save_spool_barcodes(mapping)
+    replaced = []
+    if barcode:
+        with _spool_barcode_lock:
+            mapping = load_spool_barcodes()
+            owner = mapping.get(barcode)
+            if owner is not None and owner != spool_id:
+                return jsonify(ok=False, error=f"That barcode is already assigned to spool #{owner}"), 409
+            replaced = [code for code, sid in mapping.items() if sid == spool_id and code != barcode]
+            for code in replaced:
+                del mapping[code]
+            mapping[barcode] = spool_id
+            save_spool_barcodes(mapping)
     return jsonify(ok=True, barcode=barcode, spool_id=spool_id,
                    remaining_weight=remaining_weight, weight_updated=weight_updated,
                    replaced=replaced)
