@@ -956,21 +956,10 @@ def assign_spool_by_barcode():
     if not assignments_response.ok:
         return jsonify(ok=False, error=_bambuddy_error(assignments_response)), assignments_response.status_code
     assignments = assignments_response.json() if isinstance(assignments_response.json(), list) else []
-    # Older Bambuddy versions and some database drivers may serialize these
-    # integer IDs as strings. Normalize them before deciding whether the
-    # selected slot already contains the requested spool.
-    existing = next((
-        assignment for assignment in assignments
-        if str(assignment.get("ams_id")) == str(ams_id)
-        and str(assignment.get("tray_id")) == str(tray_id)
-    ), None)
+    existing = next((a for a in assignments
+                     if a.get("ams_id") == ams_id and a.get("tray_id") == tray_id), None)
     old_spool = _spool_summary(existing.get("spool")) if existing else None
-    existing_spool_id = existing.get("spool_id") if existing else None
-    try:
-        existing_spool_id = int(existing_spool_id)
-    except (TypeError, ValueError):
-        existing_spool_id = None
-    already_assigned = bool(existing and existing_spool_id == spool_id)
+    already_assigned = bool(existing and str(existing.get("spool_id")) == str(spool_id))
 
     delete_choice = body.get("delete_existing")
     if not already_assigned and old_spool and not old_spool["empty"] and delete_choice is None:
@@ -1227,6 +1216,16 @@ def add_spool():
                 continue
         payload[key] = val
     payload.setdefault("label_weight", DEFAULT_LABEL_WEIGHT)
+    filament_cost = fields.get("filament_cost")
+    if filament_cost not in (None, ""):
+        try:
+            filament_cost = float(filament_cost)
+            label_weight = float(payload["label_weight"])
+            if filament_cost < 0 or label_weight <= 0:
+                raise ValueError
+            payload["cost_per_kg"] = round(filament_cost * 1000 / label_weight, 4)
+        except (TypeError, ValueError):
+            return jsonify(ok=False, errors=["Filament cost requires a positive net weight and cannot be negative"]), 400
     payload["data_origin"] = "barcode-scan"
 
     headers = {"X-API-Key": BAMBUDDY_API_KEY, "Content-Type": "application/json",
