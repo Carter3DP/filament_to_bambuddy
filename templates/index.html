@@ -308,6 +308,10 @@
     <div class="row">
       <div><label>{{ t('form.nozzle_min') }}</label><input id="nozzle_temp_min" inputmode="numeric"></div>
       <div><label>{{ t('form.nozzle_max') }}</label><input id="nozzle_temp_max" inputmode="numeric"></div>
+    </div>
+
+    <div class="row">
+      <div><label>{{ t('form.filament_cost') }}</label><input id="filament_cost" type="number" inputmode="decimal" min="0" step="0.01"></div>
       <div><label>{{ t('form.cost_per_kg') }}</label><input id="cost_per_kg" inputmode="decimal"></div>
     </div>
 
@@ -1071,7 +1075,11 @@ $('assignBtn').onclick=async()=>{
     const message=data.already_assigned?t('assignment.already_assigned'):(data.deleted_existing?t('assignment.deleted_and_assigned',{spool_id:data.spool_id}):t('assignment.assigned',{spool_id:data.spool_id}));
     $('assignHint').textContent=message; $('assignHint').classList.remove('err'); toast(message); if(data.warning) toast(data.warning,false);
     $('assignBarcode').value=''; $('assignPrinterBarcode').value=''; clearAssignmentState();
-    await loadMappings();
+    if(mode==='printer'||mode==='both'){
+      await loadMappings();
+    }else{
+      await Promise.all([loadSlots(),loadMappings()]);
+    }
   }catch(e){
     const message=e.message||t('assignment.assign_failed');
     $('assignHint').textContent=message; $('assignHint').classList.add('err'); toast(message,false);
@@ -1110,8 +1118,7 @@ if(ACTIVE_PAGE==='printers' || ACTIVE_PAGE==='assign') loadPrinters().then(()=>{
 function assignmentSpoolName(assignment){
   const spool=assignment.spool;
   if(!spool) return t('assignments.unknown_spool',{spool_id:assignment.spool_id});
-  const details=[spool.brand,spool.material,spool.color_name].filter(Boolean).join(' ');
-  return details ? details+' (#'+assignment.spool_id+')' : t('assignments.unknown_spool',{spool_id:assignment.spool_id});
+  return [spool.brand,spool.material,spool.color_name].filter(Boolean).join(' ') || t('assignments.unknown_spool',{spool_id:assignment.spool_id});
 }
 function renderCurrentAssignments(assignments){
   const list=$('currentAssignmentsList'); list.innerHTML='';
@@ -1131,7 +1138,7 @@ function renderCurrentAssignments(assignments){
     const row=document.createElement('div'); row.className='mapping-item';
     const info=document.createElement('div'); info.style.flex='1';
     const slot=document.createElement('div'); slot.className='assignment-slot'; slot.textContent=assignment.slot_label;
-    const name=document.createElement('div'); name.textContent=assignmentSpoolName(assignment);
+    const name=document.createElement('div'); name.textContent=assignmentSpoolName(assignment)+' (#'+assignment.spool_id+')';
     info.append(slot,name);
     if(assignment.spool){
       const weight=document.createElement('div'); weight.className='muted';
@@ -1195,6 +1202,22 @@ function hexToColorInput(rgba){ // RRGGBBAA → #RRGGBB
 }
 function colorInputToRgba(hex){ return hex.replace('#','').toUpperCase()+'FF'; }
 
+function updateFilamentCost(){
+  const costPerKg=parseFloat($('cost_per_kg').value);
+  const weight=parseFloat($('label_weight').value);
+  $('filament_cost').value=Number.isFinite(costPerKg)&&weight>0
+    ? (costPerKg*weight/1000).toFixed(2) : '';
+}
+function updateCostPerKg(){
+  const filamentCost=parseFloat($('filament_cost').value);
+  const weight=parseFloat($('label_weight').value);
+  $('cost_per_kg').value=Number.isFinite(filamentCost)&&weight>0
+    ? (filamentCost*1000/weight).toFixed(2) : '';
+}
+$('filament_cost').addEventListener('input', updateCostPerKg);
+$('cost_per_kg').addEventListener('input', updateFilamentCost);
+$('label_weight').addEventListener('change', updateFilamentCost);
+
 // Set form fields from a parsed/looked-up object; only overwrites where the
 // object actually has a value (so it merges over manual edits).
 function applyFields(f){
@@ -1209,6 +1232,7 @@ function applyFields(f){
   if(f.nozzle_temp_min!=null) $('nozzle_temp_min').value = f.nozzle_temp_min;
   if(f.nozzle_temp_max!=null) $('nozzle_temp_max').value = f.nozzle_temp_max;
   if(f.cost_per_kg!=null) $('cost_per_kg').value = f.cost_per_kg;
+  updateFilamentCost();
   if(f.note!=null) $('note').value = f.note;
 }
 
@@ -1250,7 +1274,7 @@ function fillForm(d){
   $('forgetBtn').classList.toggle('hidden', !(code && d.source==='cache'));
   // reset then apply
   ['brand','color_name','category','nozzle_temp_min','nozzle_temp_max',
-   'cost_per_kg','note','paste_title'].forEach(id=>$(id).value='');
+   'filament_cost','cost_per_kg','note','paste_title'].forEach(id=>$(id).value='');
   setSelect('material',''); setSelect('subtype',''); setSelect('storage_location','');
   setSelect('label_weight','1000'); $('quantity').value=1;
   applyFields(f);
@@ -1384,6 +1408,7 @@ $('form').onsubmit = async (e) => {
     category: $('category').value.trim(),
     nozzle_temp_min: $('nozzle_temp_min').value.trim(),
     nozzle_temp_max: $('nozzle_temp_max').value.trim(),
+    filament_cost: $('filament_cost').value.trim(),
     cost_per_kg: $('cost_per_kg').value.trim(),
     note: $('note').value.trim(),
   };
