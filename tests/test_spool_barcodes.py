@@ -242,6 +242,31 @@ def test_success_clears_all_assignment_slots(client):
     assert "await loadMappings();\n  }catch(e){" in html
 
 
+def test_printer_barcode_assignment_updates_selected_spool_remaining_weight(client):
+    app_module.save_printer_barcodes({
+        "X1C-EXT": {"printer_id": 7, "ams_id": 255, "tray_id": 0},
+    })
+    selected = spool(22, label_weight=1000, weight_used=100)
+    with (
+        patch("app.requests.get", side_effect=[
+            response(payload=[]), response(payload=selected),
+        ]),
+        patch("app.requests.patch", return_value=response(payload={**selected, "weight_used": 350})) as patch_spool,
+        patch("app.requests.post", return_value=response(payload={"id": 91})) as post,
+    ):
+        result = client.post("/api/spool-assignment", json={
+            "mode": "printer", "barcode": "X1C-EXT", "spool_id": 22,
+            "remaining_weight": 650,
+        })
+
+    assert result.status_code == 200
+    assert result.get_json()["weight_updated"] is True
+    assert patch_spool.call_args.kwargs["json"] == {"weight_used": 350.0}
+    assert post.call_args.kwargs["json"] == {
+        "spool_id": 22, "printer_id": 7, "ams_id": 255, "tray_id": 0,
+    }
+
+
 def test_printer_barcode_mode_keeps_nonempty_replacement_confirmation(client):
     app_module.save_printer_barcodes({
         "X1C-EXT": {"printer_id": 7, "ams_id": 255, "tray_id": 0},
