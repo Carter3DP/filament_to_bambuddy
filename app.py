@@ -956,8 +956,14 @@ def assign_spool_by_barcode():
     if not assignments_response.ok:
         return jsonify(ok=False, error=_bambuddy_error(assignments_response)), assignments_response.status_code
     assignments = assignments_response.json() if isinstance(assignments_response.json(), list) else []
-    existing = next((a for a in assignments
-                     if a.get("ams_id") == ams_id and a.get("tray_id") == tray_id), None)
+    def matches_slot(assignment):
+        try:
+            return (int(assignment.get("ams_id")) == ams_id and
+                    int(assignment.get("tray_id")) == tray_id)
+        except (TypeError, ValueError):
+            return False
+
+    existing = next((a for a in assignments if matches_slot(a)), None)
     old_spool = _spool_summary(existing.get("spool")) if existing else None
     already_assigned = bool(existing and str(existing.get("spool_id")) == str(spool_id))
 
