@@ -256,8 +256,8 @@ def test_already_assigned_spool_ids_are_compared_as_integers(client):
 def test_success_clears_all_assignment_slots(client):
     html = client.get("/assign-spool").get_data(as_text=True)
 
-    assert "$('assignPrinterBarcode').value=''; clearAssignmentSlots();" in html
-    assert "await loadMappings();\n  }catch(e){" in html
+    assert "$('assignPrinterBarcode').value=''; clearAssignmentState();" in html
+    assert "await loadMappings();\n    }else{" in html
 
 
 def test_printer_barcode_assignment_updates_selected_spool_remaining_weight(client):
