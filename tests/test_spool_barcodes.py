@@ -69,6 +69,68 @@ def test_mapping_list_includes_remaining_filament_weight(client):
     assert result.get_json()["spools"][0]["remaining_weight"] == 725
 
 
+def test_mapping_save_updates_remaining_filament_weight(client):
+    current = spool(12, label_weight=1000, weight_used=100)
+    with (
+        patch("app.requests.get", return_value=response(payload=current)),
+        patch("app.requests.patch", return_value=response(payload={**current, "weight_used": 275})) as patch_spool,
+    ):
+        result = client.put("/api/spool-barcodes", json={
+            "barcode": "SPOOL-12", "spool_id": 12, "remaining_weight": 725,
+        })
+
+    assert result.status_code == 200
+    assert result.get_json()["weight_updated"] is True
+    assert patch_spool.call_args.kwargs["json"] == {"weight_used": 275.0}
+    assert patch_spool.call_args.args[0].endswith("/api/v1/inventory/spools/12")
+
+
+def test_mapping_save_updates_weight_without_requiring_spool_barcode(client):
+    app_module.save_spool_barcodes({"OTHER-SPOOL": 99})
+    current = spool(12, label_weight=1000, weight_used=100)
+    with (
+        patch("app.requests.get", return_value=response(payload=current)),
+        patch("app.requests.patch", return_value=response(payload={**current, "weight_used": 400})) as patch_spool,
+    ):
+        result = client.put("/api/spool-barcodes", json={
+            "spool_id": 12, "remaining_weight": 600,
+        })
+
+    assert result.status_code == 200
+    assert result.get_json()["barcode"] == ""
+    assert result.get_json()["weight_updated"] is True
+    assert patch_spool.call_args.kwargs["json"] == {"weight_used": 400.0}
+    assert app_module.load_spool_barcodes() == {"OTHER-SPOOL": 99}
+
+
+def test_mapping_save_does_not_rewrite_unchanged_weight(client):
+    with (
+        patch("app.requests.get", return_value=response(payload=spool(12, weight_used=275))),
+        patch("app.requests.patch") as patch_spool,
+    ):
+        result = client.put("/api/spool-barcodes", json={
+            "barcode": "SPOOL-12", "spool_id": 12, "remaining_weight": 725,
+        })
+
+    assert result.status_code == 200
+    assert result.get_json()["weight_updated"] is False
+    patch_spool.assert_not_called()
+
+
+def test_mapping_save_rejects_remaining_weight_above_label_weight(client):
+    with (
+        patch("app.requests.get", return_value=response(payload=spool(12, label_weight=1000))),
+        patch("app.requests.patch") as patch_spool,
+    ):
+        result = client.put("/api/spool-barcodes", json={
+            "barcode": "SPOOL-12", "spool_id": 12, "remaining_weight": 1001,
+        })
+
+    assert result.status_code == 400
+    assert "cannot exceed 1000 g" in result.get_json()["error"]
+    patch_spool.assert_not_called()
+
+
 def test_current_assignments_are_normalized_sorted_and_include_remaining_weight(client):
     assignments = [
         {
@@ -194,8 +256,33 @@ def test_already_assigned_spool_ids_are_compared_as_integers(client):
 def test_success_clears_all_assignment_slots(client):
     html = client.get("/assign-spool").get_data(as_text=True)
 
-    assert "$('assignPrinterBarcode').value=''; clearAssignmentSlots();" in html
-    assert "await loadMappings();\n  }catch(e){" in html
+    assert "$('assignPrinterBarcode').value=''; clearAssignmentState();" in html
+    assert "await loadMappings();\n    }else{" in html
+
+
+def test_printer_barcode_assignment_updates_selected_spool_remaining_weight(client):
+    app_module.save_printer_barcodes({
+        "X1C-EXT": {"printer_id": 7, "ams_id": 255, "tray_id": 0},
+    })
+    selected = spool(22, label_weight=1000, weight_used=100)
+    with (
+        patch("app.requests.get", side_effect=[
+            response(payload=[]), response(payload=selected),
+        ]),
+        patch("app.requests.patch", return_value=response(payload={**selected, "weight_used": 350})) as patch_spool,
+        patch("app.requests.post", return_value=response(payload={"id": 91})) as post,
+    ):
+        result = client.post("/api/spool-assignment", json={
+            "mode": "printer", "barcode": "X1C-EXT", "spool_id": 22,
+            "remaining_weight": 650,
+        })
+
+    assert result.status_code == 200
+    assert result.get_json()["weight_updated"] is True
+    assert patch_spool.call_args.kwargs["json"] == {"weight_used": 350.0}
+    assert post.call_args.kwargs["json"] == {
+        "spool_id": 22, "printer_id": 7, "ams_id": 255, "tray_id": 0,
+    }
 
 
 def test_printer_barcode_mode_keeps_nonempty_replacement_confirmation(client):
@@ -251,15 +338,21 @@ def test_spool_and_printer_barcode_mode_requires_mapped_codes(client):
     assert result.get_json()["error"] == "This barcode is not linked to a printer"
 
 
-def test_assignment_scans_clear_previous_slot_state(client):
+def test_assignment_scans_only_reset_fields_owned_by_scanned_barcode(client):
     html = client.get("/assign-spool").get_data(as_text=True)
 
     assert '<option value="both">Spool + Printer barcode</option>' in html
-    assert "function clearAssignmentSlots()" in html
+    assert "function clearAssignmentPrinterTarget()" in html
+    assert "function clearAssignmentSpoolSelection()" in html
     assert "if(prefix==='assign') assignmentBarcodeScanned(inputId);" in html
+    assert "mode==='both' && inputId==='assignPrinterBarcode'" in html
+    assert "clearAssignmentPrinterTarget(); await resolveAssignmentPrinter();" in html
+    assert "resolveCombinedSpool();" in html
     assert "assignmentStateVersion++; slotLoadSequence++;" in html
     assert "if(loadSequence!==slotLoadSequence) return false;" in html
     assert "stateVersion!==assignmentStateVersion" in html
+    assert "let accessoryScanSession=0;" in html
+    assert "if(scanSession!==accessoryScanSession) return;" in html
 
 
 def test_printer_slots_include_ams_and_external_assignments(client):

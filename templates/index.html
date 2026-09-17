@@ -144,9 +144,11 @@
     <select id="mapSpool"></select>
     <label for="mapBarcode">{{ t('mapping.barcode') }}</label>
     <input id="mapBarcode" autocomplete="off" placeholder="{{ t('mapping.barcode_placeholder') }}">
+    <label for="mapRemainingWeight">{{ t('mapping.remaining_weight') }}</label>
+    <input id="mapRemainingWeight" type="number" min="0" step="1" inputmode="decimal" placeholder="{{ t('mapping.remaining_weight_placeholder') }}">
     <div class="row" style="margin-top:10px">
       <div><button id="mapScanBtn" class="btn-secondary">{{ t('mapping.scan') }}</button></div>
-      <div><button id="mapSaveBtn" class="btn-primary">{{ t('mapping.save') }}</button></div>
+      <div><button id="mapSaveBtn" class="btn-primary">{{ t('mapping.save_changes') }}</button></div>
     </div>
     <div id="mapVideoWrap" class="hidden" style="margin-top:10px">
       <video id="mapVideo" playsinline></video>
@@ -193,6 +195,8 @@
     <div id="assignSpoolWrap" class="hidden">
       <label for="assignSpool">{{ t('assignment.filament') }}</label>
       <select id="assignSpool"></select>
+      <label for="assignRemainingWeight">{{ t('assignment.remaining_weight') }}</label>
+      <input id="assignRemainingWeight" type="number" min="0" step="1" inputmode="decimal" placeholder="{{ t('assignment.remaining_weight_placeholder') }}">
     </div>
     <label for="assignBarcode" id="assignBarcodeLabel">{{ t('assignment.barcode') }}</label>
     <input id="assignBarcode" autocomplete="off" placeholder="{{ t('assignment.barcode_placeholder') }}">
@@ -304,6 +308,10 @@
     <div class="row">
       <div><label>{{ t('form.nozzle_min') }}</label><input id="nozzle_temp_min" inputmode="numeric"></div>
       <div><label>{{ t('form.nozzle_max') }}</label><input id="nozzle_temp_max" inputmode="numeric"></div>
+    </div>
+
+    <div class="row">
+      <div><label>{{ t('form.filament_cost') }}</label><input id="filament_cost" type="number" inputmode="decimal" min="0" step="0.01"></div>
       <div><label>{{ t('form.cost_per_kg') }}</label><input id="cost_per_kg" inputmode="decimal"></div>
     </div>
 
@@ -653,7 +661,9 @@ function stopScan(){
 $('stopBtn').onclick = stopScan;
 
 // ── Reusable-spool barcode scanner ──
+let accessoryScanSession=0;
 function stopAccessoryScan(prefix){
+  accessoryScanSession++;
   try{ accessoryReader && accessoryReader.reset && accessoryReader.reset(); }catch(e){}
   accessoryReader=null;
   for(const p of ['map','assign','printerMap']){
@@ -683,6 +693,7 @@ async function startAccessoryScan(prefix, inputId){
     $(prefix+'Hint').classList.add('err'); return;
   }
   stopScan(); stopAccessoryScan();
+  const scanSession=++accessoryScanSession;
   try{
     accessoryReader=new ZXingBrowser.BrowserMultiFormatReader();
     if(ZXingBrowser.BarcodeFormat){
@@ -696,6 +707,9 @@ async function startAccessoryScan(prefix, inputId){
     $(prefix+'Hint').classList.remove('err');
     $(prefix+'Hint').textContent=t('scan.align_barcode');
     await accessoryReader.decodeFromVideoDevice(undefined,$(prefix+'Video'),result=>{
+      // ZXing may deliver a queued frame after reset(). Ignore that frame if
+      // the user has already switched to the other combined-mode barcode.
+      if(scanSession!==accessoryScanSession) return;
       if(!result) return;
       const value=reusableScanValue(result);
       if(!value) return;
@@ -729,6 +743,12 @@ function mappingSpoolName(spool){
   const kilograms=(grams/1000).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:3});
   return spoolName(spool)+' — '+kilograms+' kg';
 }
+function setMappingInputs(spoolId){
+  const spool=trackedSpools.find(item=>Number(item.id)===Number(spoolId));
+  $('mapBarcode').value=spoolMappings[Number(spoolId)]||'';
+  $('mapRemainingWeight').value=spool&&Number.isFinite(Number(spool.remaining_weight))
+    ? String(Math.round(Number(spool.remaining_weight)*1000)/1000) : '';
+}
 function renderAssignSpools(){
   const select=$('assignSpool'), selected=select.value;
   select.innerHTML='';
@@ -737,6 +757,11 @@ function renderAssignSpools(){
     const option=document.createElement('option'); option.value=String(spool.id); option.textContent=mappingSpoolName(spool); select.appendChild(option);
   });
   if(trackedSpools.some(spool=>String(spool.id)===selected)) select.value=selected;
+}
+function setAssignmentRemainingWeight(){
+  const spool=trackedSpools.find(item=>Number(item.id)===Number($('assignSpool').value));
+  $('assignRemainingWeight').value=spool&&Number.isFinite(Number(spool.remaining_weight))
+    ? String(Math.round(Number(spool.remaining_weight)*1000)/1000) : '';
 }
 async function jsonResponse(response){
   const data=await response.json().catch(()=>({}));
@@ -761,7 +786,7 @@ function renderMappings(){
     const code=document.createElement('div'); code.className='mapping-code'; code.textContent=spoolMappings[spool.id]||t('mapping.not_set');
     info.append(name,code); row.appendChild(info);
     const edit=document.createElement('button'); edit.className='btn-secondary btn-small'; edit.textContent=t('mapping.edit');
-    edit.onclick=()=>{ select.value=String(spool.id); $('mapBarcode').value=spoolMappings[spool.id]||''; $('mapBarcode').focus(); };
+    edit.onclick=()=>{ select.value=String(spool.id); setMappingInputs(spool.id); $('mapBarcode').focus(); };
     row.appendChild(edit);
     if(spoolMappings[spool.id]){
       const remove=document.createElement('button'); remove.className='btn-secondary btn-small'; remove.textContent=t('mapping.remove');
@@ -782,14 +807,18 @@ async function loadMappings(){
     renderMappings(); renderAssignSpools();
   }catch(e){ $('mapHint').textContent=t('mapping.load_failed')+': '+e.message; $('mapHint').classList.add('err'); }
 }
-$('mapSpool').onchange=()=>{ $('mapBarcode').value=spoolMappings[Number($('mapSpool').value)]||''; };
+$('mapSpool').onchange=()=>setMappingInputs($('mapSpool').value);
 $('mapSaveBtn').onclick=async()=>{
   const spoolId=Number($('mapSpool').value), barcode=$('mapBarcode').value.trim();
-  if(!spoolId || !barcode){ $('mapHint').textContent=t('mapping.choose_spool'); $('mapHint').classList.add('err'); return; }
+  const remainingText=$('mapRemainingWeight').value.trim(), remainingWeight=Number(remainingText);
+  if(!spoolId){ $('mapHint').textContent=t('mapping.choose_spool'); $('mapHint').classList.add('err'); return; }
+  if(!remainingText || !Number.isFinite(remainingWeight) || remainingWeight<0){
+    $('mapHint').textContent=t('mapping.invalid_remaining_weight'); $('mapHint').classList.add('err'); return;
+  }
   $('mapSaveBtn').disabled=true;
   try{
-    const data=await jsonResponse(await fetch('/api/spool-barcodes',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({spool_id:spoolId,barcode})}));
-    toast(t('mapping.saved',{spool_id:data.spool_id})); $('mapHint').textContent=''; await loadMappings();
+    const data=await jsonResponse(await fetch('/api/spool-barcodes',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({spool_id:spoolId,barcode,remaining_weight:remainingWeight})}));
+    toast(t('mapping.changes_saved',{spool_id:data.spool_id})); $('mapHint').textContent=''; await loadMappings();
   }catch(e){ toast(e.message||t('mapping.save_failed'),false); }
   finally{ $('mapSaveBtn').disabled=false; }
 };
@@ -875,23 +904,35 @@ $('printerMapBarcode').addEventListener('keydown',e=>{ if(e.key==='Enter'){e.pre
 // ── Assign a spool using either a spool barcode or printer barcode ──
 let printerSlots=[], resolvedPrinterTarget=null, assignmentResolveTimer=null, assignmentResolvePromise=null;
 let assignmentStateVersion=0, slotLoadSequence=0;
-function clearAssignmentSlots(){
+function clearAssignmentPrinterTarget(){
   // Invalidate any printer/slot request that began before this scan/reset.
   // Otherwise a slow response for the previous barcode can repopulate its
   // occupied slot and reopen the deletion prompt after the form was cleared.
   assignmentStateVersion++; slotLoadSequence++;
   resolvedPrinterTarget=null; printerSlots=[];
   $('assignPrinter').value=''; $('assignSlot').innerHTML=''; $('assignSlot').disabled=true;
-  $('assignSpool').value=''; $('existingChoice').classList.add('hidden');
+  $('existingChoice').classList.add('hidden');
   $('assignHint').textContent=''; $('assignHint').classList.remove('err');
 }
+function clearAssignmentSpoolSelection(){
+  $('assignSpool').value=''; $('assignRemainingWeight').value='';
+}
+function clearAssignmentState(){
+  clearAssignmentPrinterTarget(); clearAssignmentSpoolSelection();
+}
 async function assignmentBarcodeScanned(inputId){
-  // A scan starts a fresh resolution pass. This prevents printer, slot,
-  // filament, and replacement choices from a previous scan being reused.
-  clearAssignmentSlots();
   const mode=$('assignMode').value;
-  if(mode==='printer') await resolveAssignmentPrinter();
-  else if(mode==='both') await resolveCombinedAssignment();
+  if(mode==='printer'){
+    // The printer barcode owns only the barcode and its resolved target.
+    // Keep the selected tracked spool and its entered remaining weight.
+    clearAssignmentPrinterTarget(); await resolveAssignmentPrinter();
+  }else if(mode==='both' && inputId==='assignPrinterBarcode'){
+    // Keep the already-scanned reusable-spool barcode and resolved spool.
+    clearAssignmentPrinterTarget(); await resolveAssignmentPrinter();
+  }else if(mode==='both'){
+    // A reusable-spool scan must not disturb the printer barcode or target.
+    resolveCombinedSpool();
+  }
 }
 function currentSlot(){
   const [ams,tray]=($('assignSlot').value||'').split(':').map(Number);
@@ -984,18 +1025,17 @@ async function resolveAssignmentPrinter(){
   try{ await work; }
   finally{ if(assignmentResolvePromise===work) assignmentResolvePromise=null; }
 }
-async function resolveCombinedAssignment(){
+function resolveCombinedSpool(){
   const spoolBarcode=$('assignBarcode').value.trim();
   const spoolEntry=Object.entries(spoolMappings).find(([,code])=>code===spoolBarcode);
   $('assignSpool').value=spoolEntry ? String(spoolEntry[0]) : '';
   if(spoolBarcode && !spoolEntry){
     $('assignHint').textContent=t('assignment.spool_not_mapped'); $('assignHint').classList.add('err');
   }
-  if($('assignPrinterBarcode').value.trim()) await resolveAssignmentPrinter();
 }
 function setAssignmentMode(){
   const mode=$('assignMode').value, printerMode=mode==='printer', bothMode=mode==='both';
-  $('assignBarcode').value=''; $('assignPrinterBarcode').value=''; clearAssignmentSlots();
+  $('assignBarcode').value=''; $('assignPrinterBarcode').value=''; clearAssignmentState();
   $('assignSpoolWrap').classList.toggle('hidden',!printerMode);
   $('assignPrinterBarcodeWrap').classList.toggle('hidden',!bothMode);
   $('assignPrinter').disabled=printerMode||bothMode;
@@ -1007,6 +1047,7 @@ function setAssignmentMode(){
 $('assignMode').onchange=setAssignmentMode;
 $('assignPrinter').onchange=()=>{ if($('assignMode').value==='spool') loadSlots(); };
 $('assignSlot').onchange=()=>{ const slot=currentSlot(); showExistingChoice(slot&&slot.assignment&&slot.assignment.spool); };
+$('assignSpool').onchange=setAssignmentRemainingWeight;
 $('assignBtn').onclick=async()=>{
   const mode=$('assignMode').value, spoolBarcode=$('assignBarcode').value.trim();
   const barcode=mode==='both'?$('assignPrinterBarcode').value.trim():spoolBarcode;
@@ -1016,8 +1057,12 @@ $('assignBtn').onclick=async()=>{
   if(!printerId||!slot||!barcode||((mode==='printer'||mode==='both')&&!spoolId)||(mode==='both'&&!spoolBarcode)){
     $('assignHint').textContent=t(mode==='both'?'assignment.both_missing_fields':(mode==='printer'?'assignment.printer_missing_fields':'assignment.missing_fields')); $('assignHint').classList.add('err'); return;
   }
+  const remainingText=$('assignRemainingWeight').value.trim(), remainingWeight=Number(remainingText);
+  if(mode==='printer' && (!remainingText || !Number.isFinite(remainingWeight) || remainingWeight<0)){
+    $('assignHint').textContent=t('assignment.invalid_remaining_weight'); $('assignHint').classList.add('err'); return;
+  }
   const body={mode,barcode,printer_id:printerId,ams_id:slot.ams_id,tray_id:slot.tray_id};
-  if(mode==='printer') body.spool_id=spoolId;
+  if(mode==='printer') Object.assign(body,{spool_id:spoolId,remaining_weight:remainingWeight});
   if(mode==='both') Object.assign(body,{spool_barcode:spoolBarcode,printer_barcode:barcode});
   if(!$('existingChoice').classList.contains('hidden')) body.delete_existing=document.querySelector('input[name="deleteExisting"]:checked').value==='delete';
   $('assignBtn').disabled=true;
@@ -1029,8 +1074,12 @@ $('assignBtn').onclick=async()=>{
     if(!response.ok||data.ok===false) throw new Error(data.error||('HTTP '+response.status));
     const message=data.already_assigned?t('assignment.already_assigned'):(data.deleted_existing?t('assignment.deleted_and_assigned',{spool_id:data.spool_id}):t('assignment.assigned',{spool_id:data.spool_id}));
     $('assignHint').textContent=message; $('assignHint').classList.remove('err'); toast(message); if(data.warning) toast(data.warning,false);
-    $('assignBarcode').value=''; $('assignPrinterBarcode').value=''; clearAssignmentSlots();
-    await loadMappings();
+    $('assignBarcode').value=''; $('assignPrinterBarcode').value=''; clearAssignmentState();
+    if(mode==='printer'||mode==='both'){
+      await loadMappings();
+    }else{
+      await Promise.all([loadSlots(),loadMappings()]);
+    }
   }catch(e){
     const message=e.message||t('assignment.assign_failed');
     $('assignHint').textContent=message; $('assignHint').classList.add('err'); toast(message,false);
@@ -1040,21 +1089,21 @@ $('assignBtn').onclick=async()=>{
 $('assignBarcode').addEventListener('input',()=>{
   const mode=$('assignMode').value;
   if(mode==='printer'){
-    clearTimeout(assignmentResolveTimer); assignmentResolveTimer=setTimeout(()=>{clearAssignmentSlots();resolveAssignmentPrinter();},350);
+    clearTimeout(assignmentResolveTimer); assignmentResolveTimer=setTimeout(()=>{clearAssignmentPrinterTarget();resolveAssignmentPrinter();},350);
   }else if(mode==='both'){
-    clearTimeout(assignmentResolveTimer); assignmentResolveTimer=setTimeout(()=>{clearAssignmentSlots();resolveCombinedAssignment();},350);
+    clearTimeout(assignmentResolveTimer); assignmentResolveTimer=setTimeout(resolveCombinedSpool,350);
   }
 });
 $('assignPrinterBarcode').addEventListener('input',()=>{
   if($('assignMode').value!=='both') return;
-  clearTimeout(assignmentResolveTimer); assignmentResolveTimer=setTimeout(()=>{clearAssignmentSlots();resolveCombinedAssignment();},350);
+  clearTimeout(assignmentResolveTimer); assignmentResolveTimer=setTimeout(()=>{clearAssignmentPrinterTarget();resolveAssignmentPrinter();},350);
 });
 $('assignBarcode').addEventListener('keydown',e=>{
   if(e.key!=='Enter') return; e.preventDefault();
   const mode=$('assignMode').value;
   if(mode==='printer') assignmentBarcodeScanned('assignBarcode');
   else if(mode==='both') assignmentBarcodeScanned('assignBarcode');
-  else { clearAssignmentSlots(); $('assignBtn').click(); }
+  else $('assignBtn').click();
 });
 $('assignPrinterBarcode').addEventListener('keydown',e=>{
   if(e.key!=='Enter') return; e.preventDefault(); assignmentBarcodeScanned('assignPrinterBarcode');
@@ -1069,8 +1118,7 @@ if(ACTIVE_PAGE==='printers' || ACTIVE_PAGE==='assign') loadPrinters().then(()=>{
 function assignmentSpoolName(assignment){
   const spool=assignment.spool;
   if(!spool) return t('assignments.unknown_spool',{spool_id:assignment.spool_id});
-  const details=[spool.brand,spool.material,spool.color_name].filter(Boolean).join(' ');
-  return details ? details+' (#'+assignment.spool_id+')' : t('assignments.unknown_spool',{spool_id:assignment.spool_id});
+  return [spool.brand,spool.material,spool.color_name].filter(Boolean).join(' ') || t('assignments.unknown_spool',{spool_id:assignment.spool_id});
 }
 function renderCurrentAssignments(assignments){
   const list=$('currentAssignmentsList'); list.innerHTML='';
@@ -1090,7 +1138,7 @@ function renderCurrentAssignments(assignments){
     const row=document.createElement('div'); row.className='mapping-item';
     const info=document.createElement('div'); info.style.flex='1';
     const slot=document.createElement('div'); slot.className='assignment-slot'; slot.textContent=assignment.slot_label;
-    const name=document.createElement('div'); name.textContent=assignmentSpoolName(assignment);
+    const name=document.createElement('div'); name.textContent=assignmentSpoolName(assignment)+' (#'+assignment.spool_id+')';
     info.append(slot,name);
     if(assignment.spool){
       const weight=document.createElement('div'); weight.className='muted';
@@ -1154,6 +1202,22 @@ function hexToColorInput(rgba){ // RRGGBBAA → #RRGGBB
 }
 function colorInputToRgba(hex){ return hex.replace('#','').toUpperCase()+'FF'; }
 
+function updateFilamentCost(){
+  const costPerKg=parseFloat($('cost_per_kg').value);
+  const weight=parseFloat($('label_weight').value);
+  $('filament_cost').value=Number.isFinite(costPerKg)&&weight>0
+    ? (costPerKg*weight/1000).toFixed(2) : '';
+}
+function updateCostPerKg(){
+  const filamentCost=parseFloat($('filament_cost').value);
+  const weight=parseFloat($('label_weight').value);
+  $('cost_per_kg').value=Number.isFinite(filamentCost)&&weight>0
+    ? (filamentCost*1000/weight).toFixed(2) : '';
+}
+$('filament_cost').addEventListener('input', updateCostPerKg);
+$('cost_per_kg').addEventListener('input', updateFilamentCost);
+$('label_weight').addEventListener('change', updateFilamentCost);
+
 // Set form fields from a parsed/looked-up object; only overwrites where the
 // object actually has a value (so it merges over manual edits).
 function applyFields(f){
@@ -1168,6 +1232,7 @@ function applyFields(f){
   if(f.nozzle_temp_min!=null) $('nozzle_temp_min').value = f.nozzle_temp_min;
   if(f.nozzle_temp_max!=null) $('nozzle_temp_max').value = f.nozzle_temp_max;
   if(f.cost_per_kg!=null) $('cost_per_kg').value = f.cost_per_kg;
+  updateFilamentCost();
   if(f.note!=null) $('note').value = f.note;
 }
 
@@ -1209,7 +1274,7 @@ function fillForm(d){
   $('forgetBtn').classList.toggle('hidden', !(code && d.source==='cache'));
   // reset then apply
   ['brand','color_name','category','nozzle_temp_min','nozzle_temp_max',
-   'cost_per_kg','note','paste_title'].forEach(id=>$(id).value='');
+   'filament_cost','cost_per_kg','note','paste_title'].forEach(id=>$(id).value='');
   setSelect('material',''); setSelect('subtype',''); setSelect('storage_location','');
   setSelect('label_weight','1000'); $('quantity').value=1;
   applyFields(f);
@@ -1343,6 +1408,7 @@ $('form').onsubmit = async (e) => {
     category: $('category').value.trim(),
     nozzle_temp_min: $('nozzle_temp_min').value.trim(),
     nozzle_temp_max: $('nozzle_temp_max').value.trim(),
+    filament_cost: $('filament_cost').value.trim(),
     cost_per_kg: $('cost_per_kg').value.trim(),
     note: $('note').value.trim(),
   };
