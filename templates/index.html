@@ -1218,22 +1218,23 @@ $('filament_cost').addEventListener('input', updateCostPerKg);
 $('cost_per_kg').addEventListener('input', updateFilamentCost);
 $('label_weight').addEventListener('change', updateFilamentCost);
 
-// Set form fields from a parsed/looked-up object; only overwrites where the
-// object actually has a value (so it merges over manual edits).
+function fieldIsEmpty(id){ return !String($(id).value||'').trim(); }
+
+// Merge parsed/looked-up values into blank controls only. Anything the user
+// has already entered remains authoritative.
 function applyFields(f){
-  if(f.material!=null) setSelect('material', f.material);
-  if(f.brand!=null) $('brand').value = f.brand;
-  if(f.subtype!=null) setSelect('subtype', f.subtype);
-  if(f.color_name!=null) $('color_name').value = f.color_name;
-  if(f.rgba){ const c=hexToColorInput(f.rgba); if(c) $('color_picker').value=c; }
-  if(f.label_weight!=null) setSelect('label_weight', f.label_weight);
-  if(f.storage_location!=null) setSelect('storage_location', f.storage_location);
-  if(f.category!=null) $('category').value = f.category;
-  if(f.nozzle_temp_min!=null) $('nozzle_temp_min').value = f.nozzle_temp_min;
-  if(f.nozzle_temp_max!=null) $('nozzle_temp_max').value = f.nozzle_temp_max;
-  if(f.cost_per_kg!=null) $('cost_per_kg').value = f.cost_per_kg;
-  updateFilamentCost();
-  if(f.note!=null) $('note').value = f.note;
+  if(f.material!=null && fieldIsEmpty('material')) setSelect('material', f.material);
+  if(f.brand!=null && fieldIsEmpty('brand')) $('brand').value = f.brand;
+  if(f.subtype!=null && fieldIsEmpty('subtype')) setSelect('subtype', f.subtype);
+  if(f.color_name!=null && fieldIsEmpty('color_name')) $('color_name').value = f.color_name;
+  if(f.label_weight!=null && fieldIsEmpty('label_weight')) setSelect('label_weight', f.label_weight);
+  if(f.storage_location!=null && fieldIsEmpty('storage_location')) setSelect('storage_location', f.storage_location);
+  if(f.category!=null && fieldIsEmpty('category')) $('category').value = f.category;
+  if(f.nozzle_temp_min!=null && fieldIsEmpty('nozzle_temp_min')) $('nozzle_temp_min').value = f.nozzle_temp_min;
+  if(f.nozzle_temp_max!=null && fieldIsEmpty('nozzle_temp_max')) $('nozzle_temp_max').value = f.nozzle_temp_max;
+  if(f.cost_per_kg!=null && fieldIsEmpty('cost_per_kg')) $('cost_per_kg').value = f.cost_per_kg;
+  if(fieldIsEmpty('filament_cost')) updateFilamentCost();
+  if(f.note!=null && fieldIsEmpty('note')) $('note').value = f.note;
 }
 
 // Built lazily (not at module scope) so it always reflects the current I18N
@@ -1272,11 +1273,6 @@ function fillForm(d){
   $('searchLink').style.display = code ? '' : 'none';
   // 'Forget' only makes sense for a remembered (cache) entry with a barcode.
   $('forgetBtn').classList.toggle('hidden', !(code && d.source==='cache'));
-  // reset then apply
-  ['brand','color_name','category','nozzle_temp_min','nozzle_temp_max',
-   'filament_cost','cost_per_kg','note','paste_title'].forEach(id=>$(id).value='');
-  setSelect('material',''); setSelect('subtype',''); setSelect('storage_location','');
-  setSelect('label_weight','1000'); $('quantity').value=1;
   applyFields(f);
   $('material').focus();
 }
