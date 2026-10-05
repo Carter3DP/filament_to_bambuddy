@@ -49,13 +49,25 @@ def test_sets_unique_barcode_and_replaces_previous_code_for_same_spool(client):
     assert json.loads(app_module.SPOOL_BARCODE_FILE.read_text()) == {"NEW": 12}
 
 
-def test_rejects_barcode_already_owned_by_another_spool(client):
+def test_reassigns_barcode_already_owned_by_another_spool(client):
     app_module.save_spool_barcodes({"REUSE-1": 3})
     with patch("app.requests.get", return_value=response(payload=spool(4))):
         result = client.put("/api/spool-barcodes", json={"barcode": "REUSE-1", "spool_id": 4})
 
-    assert result.status_code == 409
-    assert "spool #3" in result.get_json()["error"]
+    assert result.status_code == 200
+    assert result.get_json()["reassigned_from"] == 3
+    assert app_module.load_spool_barcodes() == {"REUSE-1": 4}
+
+
+def test_reassignment_removes_existing_barcode_from_new_spool(client):
+    app_module.save_spool_barcodes({"REUSE-1": 3, "OLD-4": 4})
+    with patch("app.requests.get", return_value=response(payload=spool(4))):
+        result = client.put("/api/spool-barcodes", json={"barcode": "REUSE-1", "spool_id": 4})
+
+    assert result.status_code == 200
+    assert result.get_json()["reassigned_from"] == 3
+    assert result.get_json()["replaced"] == ["OLD-4"]
+    assert app_module.load_spool_barcodes() == {"REUSE-1": 4}
 
 
 def test_mapping_list_includes_remaining_filament_weight(client):
@@ -173,6 +185,22 @@ def test_only_reusable_spool_scanners_enable_code_39(client):
     assert reusable_formats
     assert "F.CODE_39" not in new_spool_formats.group(1)
     assert "F.CODE_39" in reusable_formats.group(1)
+
+
+def test_spool_selection_preserves_an_entered_barcode(client):
+    html = client.get("/spool-barcodes").get_data(as_text=True)
+
+    assert "if(!$('mapBarcode').value.trim() && storedBarcode)" in html
+    assert "$('mapBarcode').value=spoolMappings[Number(spoolId)]||'';" not in html
+
+
+def test_assignment_camera_is_placed_below_the_clicked_scan_button(client):
+    html = client.get("/assign-spool").get_data(as_text=True)
+
+    assert "inputId==='assignPrinterBarcode' ? $('assignPrinterScanBtn')" in html
+    assert "scanButton.insertAdjacentElement('afterend',$('assignVideoWrap'))" in html
+    assert "scanButton.classList.add('hidden')" in html
+    assert "$('assignPrinterScanBtn').classList.remove('hidden')" in html
 
 
 def test_saves_and_resolves_printer_only_barcode(client):

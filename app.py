@@ -627,12 +627,6 @@ def set_spool_barcode():
     if remaining_weight is not None and remaining_weight > label_weight:
         return jsonify(ok=False, error=f"Remaining weight cannot exceed {label_weight:g} g"), 400
 
-    if barcode:
-        mapping = load_spool_barcodes()
-        owner = mapping.get(barcode)
-        if owner is not None and owner != spool_id:
-            return jsonify(ok=False, error=f"That barcode is already assigned to spool #{owner}"), 409
-
     current_remaining = max(0.0, label_weight - float(spool.get("weight_used") or 0))
     weight_updated = remaining_weight is not None and abs(remaining_weight - current_remaining) > 0.001
     if weight_updated:
@@ -648,12 +642,13 @@ def set_spool_barcode():
             return jsonify(ok=False, error=_bambuddy_error(update_response)), update_response.status_code
 
     replaced = []
+    reassigned_from = None
     if barcode:
         with _spool_barcode_lock:
             mapping = load_spool_barcodes()
             owner = mapping.get(barcode)
             if owner is not None and owner != spool_id:
-                return jsonify(ok=False, error=f"That barcode is already assigned to spool #{owner}"), 409
+                reassigned_from = owner
             replaced = [code for code, sid in mapping.items() if sid == spool_id and code != barcode]
             for code in replaced:
                 del mapping[code]
@@ -661,7 +656,7 @@ def set_spool_barcode():
             save_spool_barcodes(mapping)
     return jsonify(ok=True, barcode=barcode, spool_id=spool_id,
                    remaining_weight=remaining_weight, weight_updated=weight_updated,
-                   replaced=replaced)
+                   replaced=replaced, reassigned_from=reassigned_from)
 
 
 @app.delete("/api/spool-barcodes/spool/<int:spool_id>")
