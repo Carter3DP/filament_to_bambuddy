@@ -671,6 +671,7 @@ function stopAccessoryScan(prefix){
     $(p+'ScanBtn').classList.remove('hidden');
     $(p+'StopBtn').classList.add('hidden');
   }
+  $('assignPrinterScanBtn').classList.remove('hidden');
 }
 function reusableScanValue(result){
   const raw=(result.getText()||'').trim();
@@ -694,6 +695,13 @@ async function startAccessoryScan(prefix, inputId){
   }
   stopScan(); stopAccessoryScan();
   const scanSession=++accessoryScanSession;
+  const scanButton=inputId==='assignPrinterBarcode' ? $('assignPrinterScanBtn') : $(prefix+'ScanBtn');
+  if(prefix==='assign'){
+    // The combined mode shares one camera, but it should appear directly
+    // beneath whichever barcode's scan button opened it.
+    scanButton.insertAdjacentElement('afterend',$('assignStopBtn'));
+    scanButton.insertAdjacentElement('afterend',$('assignVideoWrap'));
+  }
   try{
     accessoryReader=new ZXingBrowser.BrowserMultiFormatReader();
     if(ZXingBrowser.BarcodeFormat){
@@ -702,7 +710,7 @@ async function startAccessoryScan(prefix, inputId){
       accessoryReader.possibleFormats=[F.UPC_A,F.UPC_E,F.EAN_13,F.EAN_8,F.QR_CODE,F.CODE_39,F.CODE_128];
     }
     $(prefix+'VideoWrap').classList.remove('hidden');
-    $(prefix+'ScanBtn').classList.add('hidden');
+    scanButton.classList.add('hidden');
     $(prefix+'StopBtn').classList.remove('hidden');
     $(prefix+'Hint').classList.remove('err');
     $(prefix+'Hint').textContent=t('scan.align_barcode');
@@ -745,7 +753,8 @@ function mappingSpoolName(spool){
 }
 function setMappingInputs(spoolId){
   const spool=trackedSpools.find(item=>Number(item.id)===Number(spoolId));
-  $('mapBarcode').value=spoolMappings[Number(spoolId)]||'';
+  const storedBarcode=spoolMappings[Number(spoolId)];
+  if(!$('mapBarcode').value.trim() && storedBarcode) $('mapBarcode').value=storedBarcode;
   $('mapRemainingWeight').value=spool&&Number.isFinite(Number(spool.remaining_weight))
     ? String(Math.round(Number(spool.remaining_weight)*1000)/1000) : '';
 }
