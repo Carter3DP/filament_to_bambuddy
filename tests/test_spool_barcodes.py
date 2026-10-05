@@ -187,6 +187,22 @@ def test_only_reusable_spool_scanners_enable_code_39(client):
     assert "F.CODE_39" in reusable_formats.group(1)
 
 
+def test_spool_selection_preserves_an_entered_barcode(client):
+    html = client.get("/spool-barcodes").get_data(as_text=True)
+
+    assert "if(!$('mapBarcode').value.trim() && storedBarcode)" in html
+    assert "$('mapBarcode').value=spoolMappings[Number(spoolId)]||'';" not in html
+
+
+def test_assignment_camera_is_placed_below_the_clicked_scan_button(client):
+    html = client.get("/assign-spool").get_data(as_text=True)
+
+    assert "inputId==='assignPrinterBarcode' ? $('assignPrinterScanBtn')" in html
+    assert "scanButton.insertAdjacentElement('afterend',$('assignVideoWrap'))" in html
+    assert "scanButton.classList.add('hidden')" in html
+    assert "$('assignPrinterScanBtn').classList.remove('hidden')" in html
+
+
 def test_saves_and_resolves_printer_only_barcode(client):
     printers = [{"id": 7, "name": "Workshop X1C"}]
     with patch("app.requests.get", return_value=response(payload=printers)):
