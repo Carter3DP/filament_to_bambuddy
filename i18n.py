@@ -95,6 +95,7 @@ EN = {
         "filament_cost": "Filament cost",
         "cost_per_kg": "Cost /kg",
         "note": "Note",
+        "overwrite_presets": "Overwrite existing preset values when filling from a scan",
         "submit": "＋ Add to Bambuddy inventory",
         "forgotten": "Forgotten — it won't auto-fill next time",
         "forget_failed": "Failed",
@@ -1277,6 +1278,7 @@ TR = {
 # structurally complete while the new copy is translated incrementally.
 for _translations in (DE, ES, FR, JA, IT, KO, PT_BR, ZH_CN, ZH_TW, TR):
     _translations.setdefault("nav", dict(EN["nav"]))
+    _translations.setdefault("form", {})["overwrite_presets"] = EN["form"]["overwrite_presets"]
     _translations.setdefault("mapping", dict(EN["mapping"]))
     _translations.setdefault("printer_mapping", dict(EN["printer_mapping"]))
     _translations.setdefault("assignment", dict(EN["assignment"]))

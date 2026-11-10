@@ -63,6 +63,13 @@ ALLOWED_SPOOL_FIELDS = {
     "note", "cost_per_kg", "category", "storage_location", "data_origin",
 }
 
+# Values used only by the Add Filament form's learned barcode preset. They do
+# not belong in Bambuddy's SpoolCreate payload, but retaining them makes a
+# later scan reproduce the complete form instead of only its API fields.
+CACHED_FORM_FIELDS = ALLOWED_SPOOL_FIELDS | {
+    "diameter_mm", "filament_cost", "paste_title", "quantity",
+}
+
 # GTIN-8/12/13/14 are the only standard checksummed lengths. The floor below
 # the max (rather than an exact 8/12/13/14 match) accounts for leading zeros
 # already stripped from the raw input — see _classify_code. Mirrors Bambuddy's
@@ -1251,8 +1258,8 @@ def add_spool():
     # resolves instantly as "remembered" instead of re-querying OFD/SpoolmanDB.
     if created and barcode:
         cache = load_cache()
-        remembered = {k: v for k, v in fields.items()
-                      if k in ALLOWED_SPOOL_FIELDS or k in ("diameter_mm",)}
+        remembered = {k: v for k, v in fields.items() if k in CACHED_FORM_FIELDS}
+        remembered["quantity"] = quantity
         code, kind = _classify_code(barcode)
         cache[code] = remembered
         try:

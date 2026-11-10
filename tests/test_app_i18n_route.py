@@ -31,9 +31,10 @@ class TestIndexRouteLanguage:
         body = client.get("/").get_data(as_text=True)
 
         assert "function fieldIsEmpty(id)" in body
-        assert "f.brand!=null && fieldIsEmpty('brand')" in body
-        assert "f.material!=null && fieldIsEmpty('material')" in body
-        assert "f.cost_per_kg!=null && fieldIsEmpty('cost_per_kg')" in body
+        assert "const overwrite=$('overwritePresets').checked" in body
+        assert "overwrite||fieldIsEmpty('material')" in body
+        assert "put('brand',f.brand)" in body
+        assert "put('cost_per_kg',f.cost_per_kg)" in body
         assert "reset then apply" not in body
 
     def test_query_param_overrides_default(self, client):
