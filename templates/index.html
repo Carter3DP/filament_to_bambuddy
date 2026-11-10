@@ -269,6 +269,11 @@
     <div id="titleLine" class="muted" style="margin-bottom:2px"></div>
     <div id="linkedCodesLine" class="muted" style="margin-bottom:8px;font-size:12px"></div>
 
+    <label class="choice" style="margin-bottom:10px">
+      <input id="overwritePresets" type="checkbox">
+      <span>{{ t('form.overwrite_presets') }}</span>
+    </label>
+
     <label>{{ t('form.paste_title_label') }}</label>
     <div class="row">
       <div><input id="paste_title" placeholder="{{ t('form.paste_title_placeholder') }}"></div>
@@ -1228,22 +1233,37 @@ $('cost_per_kg').addEventListener('input', updateFilamentCost);
 $('label_weight').addEventListener('change', updateFilamentCost);
 
 function fieldIsEmpty(id){ return !String($(id).value||'').trim(); }
+let colorFieldSet=false;
+$('color_picker').addEventListener('input',()=>{ colorFieldSet=true; });
 
-// Merge parsed/looked-up values into blank controls only. Anything the user
-// has already entered remains authoritative.
+// Merge parsed/looked-up values into blank controls by default. The optional
+// toggle allows a scan to replace existing defaults or prior form values.
 function applyFields(f){
-  if(f.material!=null && fieldIsEmpty('material')) setSelect('material', f.material);
-  if(f.brand!=null && fieldIsEmpty('brand')) $('brand').value = f.brand;
-  if(f.subtype!=null && fieldIsEmpty('subtype')) setSelect('subtype', f.subtype);
-  if(f.color_name!=null && fieldIsEmpty('color_name')) $('color_name').value = f.color_name;
-  if(f.label_weight!=null && fieldIsEmpty('label_weight')) setSelect('label_weight', f.label_weight);
-  if(f.storage_location!=null && fieldIsEmpty('storage_location')) setSelect('storage_location', f.storage_location);
-  if(f.category!=null && fieldIsEmpty('category')) $('category').value = f.category;
-  if(f.nozzle_temp_min!=null && fieldIsEmpty('nozzle_temp_min')) $('nozzle_temp_min').value = f.nozzle_temp_min;
-  if(f.nozzle_temp_max!=null && fieldIsEmpty('nozzle_temp_max')) $('nozzle_temp_max').value = f.nozzle_temp_max;
-  if(f.cost_per_kg!=null && fieldIsEmpty('cost_per_kg')) $('cost_per_kg').value = f.cost_per_kg;
-  if(fieldIsEmpty('filament_cost')) updateFilamentCost();
-  if(f.note!=null && fieldIsEmpty('note')) $('note').value = f.note;
+  const overwrite=$('overwritePresets').checked;
+  const put=(id,value)=>{
+    if(value!=null && (overwrite||fieldIsEmpty(id))){ $(id).value=value; return true; }
+    return false;
+  };
+  if(f.material!=null && (overwrite||fieldIsEmpty('material'))) setSelect('material',f.material);
+  put('brand',f.brand);
+  if(f.subtype!=null && (overwrite||fieldIsEmpty('subtype'))) setSelect('subtype',f.subtype);
+  put('color_name',f.color_name);
+  if(f.rgba!=null && (overwrite||!colorFieldSet)){
+    const color=hexToColorInput(f.rgba);
+    if(color){ $('color_picker').value=color; colorFieldSet=true; }
+  }
+  if(f.label_weight!=null && (overwrite||fieldIsEmpty('label_weight'))) setSelect('label_weight',f.label_weight);
+  put('quantity',f.quantity);
+  if(f.storage_location!=null && (overwrite||fieldIsEmpty('storage_location'))) setSelect('storage_location',f.storage_location);
+  put('category',f.category);
+  put('nozzle_temp_min',f.nozzle_temp_min);
+  put('nozzle_temp_max',f.nozzle_temp_max);
+  const costApplied=put('filament_cost',f.filament_cost);
+  const perKgApplied=put('cost_per_kg',f.cost_per_kg);
+  if(perKgApplied && fieldIsEmpty('filament_cost')) updateFilamentCost();
+  else if(costApplied && fieldIsEmpty('cost_per_kg')) updateCostPerKg();
+  put('note',f.note);
+  put('paste_title',f.paste_title);
 }
 
 // Built lazily (not at module scope) so it always reflects the current I18N
@@ -1416,6 +1436,7 @@ $('form').onsubmit = async (e) => {
     filament_cost: $('filament_cost').value.trim(),
     cost_per_kg: $('cost_per_kg').value.trim(),
     note: $('note').value.trim(),
+    paste_title: $('paste_title').value.trim(),
   };
   if(!fields.material){ toast(t('submit.material_required'), false); return; }
   const quantity = parseInt($('quantity').value)||1;
