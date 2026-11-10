@@ -32,6 +32,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Verify runtime Python packages
+        run: |
+          docker run --rm filament-to-bambuddy:ci python -c \
+            "import importlib.util, urllib3; assert tuple(map(int, urllib3.__version__.split('.'))) >= (2, 8, 0); assert importlib.util.find_spec('msgpack') is None; assert importlib.util.find_spec('pip') is None"
+
       - name: Run container
         run: |
           docker run -d --name smoke-test -p 8088:8088 filament-to-bambuddy:ci
@@ -127,6 +132,7 @@ jobs:
           output: trivy-results.sarif
           severity: CRITICAL,HIGH
           ignore-unfixed: true
+          exit-code: 1
 
       - name: Upload results to the Security tab
         if: always()
