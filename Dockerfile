@@ -16,8 +16,13 @@ ARG VERSION=dev
 WORKDIR /app
 
 # Deps first for layer caching. gunicorn serves the Flask app in production.
+# pip is only build tooling, so remove it from the runtime image after the
+# install. This also removes pip's private, vendored copies of packages such as
+# urllib3 and msgpack; they are not application dependencies and should not be
+# shipped or reported as runtime vulnerabilities.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt gunicorn
+RUN python -m pip install --no-cache-dir -r requirements.txt gunicorn \
+    && python -m pip uninstall --yes pip
 
 # App code
 COPY app.py ofd.py filament_parse.py spoolmandb_community.py i18n.py ./

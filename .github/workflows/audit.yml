@@ -10,5 +10,6 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: pip install pip-audit flask requests gunicorn
+      - run: python -m pip install --upgrade "pip>=26.3"
+      - run: pip install pip-audit gunicorn -r requirements.txt
       - run: pip-audit

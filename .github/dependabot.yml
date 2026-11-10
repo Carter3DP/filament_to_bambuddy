@@ -1,6 +1,6 @@
 version: 2
 updates:
-  # requirements.txt (flask, requests) + gunicorn/pytest pinned in CI installs.
+  # requirements.txt (flask, requests, urllib3) + gunicorn/pytest in CI installs.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
@@ -20,7 +20,7 @@ updates:
         patterns: ["*"]
     labels: ["dependencies", "github-actions"]
 
-  # The `FROM python:3.12-slim` base image in Dockerfile.
+  # The `FROM python:3.14-slim` base image in Dockerfile.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
