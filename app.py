@@ -969,11 +969,15 @@ def assign_spool_by_barcode():
     old_spool = _spool_summary(existing.get("spool")) if existing else None
     already_assigned = bool(existing and str(existing.get("spool_id")) == str(spool_id))
 
-    delete_choice = body.get("delete_existing")
-    if not already_assigned and old_spool and not old_spool["empty"] and delete_choice is None:
+    archive_choice = body.get("archive_existing")
+    # Accept the old request field during upgrades so a page cached before
+    # this change archives the spool instead of failing or deleting it.
+    if archive_choice is None and "delete_existing" in body:
+        archive_choice = body.get("delete_existing")
+    if not already_assigned and old_spool and not old_spool["empty"] and archive_choice is None:
         return jsonify(ok=False, confirmation_required=True, existing_spool=old_spool), 409
-    delete_old = bool(not already_assigned and old_spool and
-                      (old_spool["empty"] or delete_choice is True))
+    archive_old = bool(not already_assigned and old_spool and
+                       (old_spool["empty"] or archive_choice is True))
 
     remaining_raw = body.get("remaining_weight")
     try:
@@ -1014,7 +1018,7 @@ def assign_spool_by_barcode():
 
     if already_assigned:
         return jsonify(ok=True, already_assigned=True, spool_id=spool_id,
-                       assignment=existing, deleted_existing=False,
+                       assignment=existing, archived_existing=False,
                        weight_updated=weight_updated)
 
     payload = {"spool_id": spool_id, "printer_id": printer_id,
@@ -1029,29 +1033,24 @@ def assign_spool_by_barcode():
     if not assignment_response.ok:
         return jsonify(ok=False, error=_bambuddy_error(assignment_response)), assignment_response.status_code
 
-    deleted_existing = False
+    archived_existing = False
     warning = None
-    if delete_old:
+    if archive_old:
         old_spool_id = int(old_spool["id"])
         try:
-            delete_response = requests.delete(
-                f"{BAMBUDDY_URL}/api/v1/inventory/spools/{old_spool_id}",
+            archive_response = requests.post(
+                f"{BAMBUDDY_URL}/api/v1/inventory/spools/{old_spool_id}/archive",
                 headers=_bambuddy_headers(), timeout=30,
             )
-            if delete_response.ok:
-                deleted_existing = True
-                with _spool_barcode_lock:
-                    latest = load_spool_barcodes()
-                    for code in [code for code, sid in latest.items() if sid == old_spool_id]:
-                        del latest[code]
-                    save_spool_barcodes(latest)
+            if archive_response.ok:
+                archived_existing = True
             else:
-                warning = f"Spool assigned, but old spool could not be deleted: {_bambuddy_error(delete_response)}"
+                warning = f"Spool assigned, but old spool could not be archived: {_bambuddy_error(archive_response)}"
         except requests.RequestException as exc:
-            warning = f"Spool assigned, but old spool could not be deleted: {exc}"
+            warning = f"Spool assigned, but old spool could not be archived: {exc}"
 
     return jsonify(ok=True, spool_id=spool_id, assignment=assignment_response.json(),
-                   deleted_existing=deleted_existing, warning=warning,
+                   archived_existing=archived_existing, warning=warning,
                    weight_updated=weight_updated)
 
 
