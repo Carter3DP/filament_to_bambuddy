@@ -31,8 +31,8 @@ Dedicated pages also support reusable-spool and printer barcodes:
 2. Choose a printer by name and select its AMS or external filament slot.
 3. Scan the reusable-spool barcode and assign it. If the slot's previous
    tracked spool still contains filament, an inline choice defaults to keeping
-   that spool in inventory; choosing delete also removes its saved barcode.
-   Empty previous spools are removed automatically.
+   that spool active; choosing archive preserves both its inventory history and
+   saved barcode mapping. Empty previous spools are archived automatically.
 4. Optionally link another barcode to a printer or a fixed printer slot. In
    **Printer barcode** assignment mode, scan that code, select the tracked
    filament spool, and assign it immediately. Printer-only mappings ask for a

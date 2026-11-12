@@ -213,8 +213,8 @@
     <div id="assignHint" class="hint"></div>
     <div id="existingChoice" class="warning hidden">
       <div id="existingMessage"></div>
-      <label class="choice"><input type="radio" name="deleteExisting" value="keep" checked><span>{{ t('assignment.keep_existing') }}</span></label>
-      <label class="choice"><input type="radio" name="deleteExisting" value="delete"><span>{{ t('assignment.delete_existing') }}</span></label>
+      <label class="choice"><input type="radio" name="archiveExisting" value="keep" checked><span>{{ t('assignment.keep_existing') }}</span></label>
+      <label class="choice"><input type="radio" name="archiveExisting" value="archive"><span>{{ t('assignment.archive_existing') }}</span></label>
     </div>
     <button id="assignBtn" class="btn-primary" style="margin-top:12px">{{ t('assignment.assign') }}</button>
   </div>
@@ -1078,15 +1078,15 @@ $('assignBtn').onclick=async()=>{
   const body={mode,barcode,printer_id:printerId,ams_id:slot.ams_id,tray_id:slot.tray_id};
   if(mode==='printer') Object.assign(body,{spool_id:spoolId,remaining_weight:remainingWeight});
   if(mode==='both') Object.assign(body,{spool_barcode:spoolBarcode,printer_barcode:barcode});
-  if(!$('existingChoice').classList.contains('hidden')) body.delete_existing=document.querySelector('input[name="deleteExisting"]:checked').value==='delete';
+  if(!$('existingChoice').classList.contains('hidden')) body.archive_existing=document.querySelector('input[name="archiveExisting"]:checked').value==='archive';
   $('assignBtn').disabled=true;
   $('assignHint').textContent=t('assignment.assigning'); $('assignHint').classList.remove('err');
   try{
     const response=await fetch('/api/spool-assignment',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const data=await response.json().catch(()=>({}));
-    if(response.status===409 && data.confirmation_required){ showExistingChoice(data.existing_spool); $('assignHint').textContent=t('assignment.choose_delete_option'); return; }
+    if(response.status===409 && data.confirmation_required){ showExistingChoice(data.existing_spool); $('assignHint').textContent=t('assignment.choose_archive_option'); return; }
     if(!response.ok||data.ok===false) throw new Error(data.error||('HTTP '+response.status));
-    const message=data.already_assigned?t('assignment.already_assigned'):(data.deleted_existing?t('assignment.deleted_and_assigned',{spool_id:data.spool_id}):t('assignment.assigned',{spool_id:data.spool_id}));
+    const message=data.already_assigned?t('assignment.already_assigned'):(data.archived_existing?t('assignment.archived_and_assigned',{spool_id:data.spool_id}):t('assignment.assigned',{spool_id:data.spool_id}));
     $('assignHint').textContent=message; $('assignHint').classList.remove('err'); toast(message); if(data.warning) toast(data.warning,false);
     $('assignBarcode').value=''; $('assignPrinterBarcode').value=''; clearAssignmentState();
     if(mode==='printer'||mode==='both'){

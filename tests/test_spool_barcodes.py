@@ -417,40 +417,65 @@ def test_nonempty_existing_spool_requires_explicit_choice(client):
     post.assert_not_called()
 
 
-def test_keep_choice_assigns_without_deleting_old_spool(client):
+def test_keep_choice_assigns_without_archiving_old_spool(client):
     app_module.save_spool_barcodes({"TARGET": 22, "OLD": 11})
     existing = {"spool_id": 11, "ams_id": 0, "tray_id": 2, "spool": spool(11, weight_used=250)}
     assigned = {"id": 90, "spool_id": 22, "printer_id": 7, "ams_id": 0, "tray_id": 2}
     with (
         patch("app.requests.get", return_value=response(payload=[existing])),
         patch("app.requests.post", return_value=response(payload=assigned)) as post,
+    ):
+        result = client.post("/api/spool-assignment", json={
+            "barcode": "TARGET", "printer_id": 7, "ams_id": 0, "tray_id": 2,
+            "archive_existing": False,
+        })
+
+    assert result.status_code == 200
+    assert post.call_count == 1
+    assert post.call_args.kwargs["json"] == {"spool_id": 22, "printer_id": 7, "ams_id": 0, "tray_id": 2}
+    assert app_module.load_spool_barcodes() == {"TARGET": 22, "OLD": 11}
+
+
+@pytest.mark.parametrize("choice_field", ["archive_existing", "delete_existing"])
+def test_archive_choice_archives_nonempty_spool_and_preserves_its_mapping(client, choice_field):
+    app_module.save_spool_barcodes({"TARGET": 22, "OLD": 11})
+    existing = {"spool_id": 11, "ams_id": 0, "tray_id": 2,
+                "spool": spool(11, label_weight=1000, weight_used=250)}
+    assigned = {"id": 91, "spool_id": 22, "printer_id": 7, "ams_id": 0, "tray_id": 2}
+    archived = {**spool(11, label_weight=1000, weight_used=250), "archived_at": "2026-11-12T12:00:00Z"}
+    with (
+        patch("app.requests.get", return_value=response(payload=[existing])),
+        patch("app.requests.post", side_effect=[response(payload=assigned), response(payload=archived)]) as post,
         patch("app.requests.delete") as delete,
     ):
         result = client.post("/api/spool-assignment", json={
             "barcode": "TARGET", "printer_id": 7, "ams_id": 0, "tray_id": 2,
-            "delete_existing": False,
+            choice_field: True,
         })
 
     assert result.status_code == 200
-    assert post.call_args.kwargs["json"] == {"spool_id": 22, "printer_id": 7, "ams_id": 0, "tray_id": 2}
+    assert result.get_json()["archived_existing"] is True
+    assert post.call_args_list[1].args[0].endswith("/api/v1/inventory/spools/11/archive")
     delete.assert_not_called()
     assert app_module.load_spool_barcodes() == {"TARGET": 22, "OLD": 11}
 
 
-def test_empty_existing_spool_is_deleted_and_its_mapping_reset(client):
+def test_empty_existing_spool_is_archived_automatically_and_keeps_its_mapping(client):
     app_module.save_spool_barcodes({"TARGET": 22, "EMPTY-SPOOL": 11})
     existing = {"spool_id": 11, "ams_id": 255, "tray_id": 0,
                 "spool": spool(11, label_weight=1000, weight_used=1000)}
     assigned = {"id": 91, "spool_id": 22, "printer_id": 7, "ams_id": 255, "tray_id": 0}
+    archived = {**spool(11, label_weight=1000, weight_used=1000), "archived_at": "2026-11-12T12:00:00Z"}
     with (
         patch("app.requests.get", return_value=response(payload=[existing])),
-        patch("app.requests.post", return_value=response(payload=assigned)),
-        patch("app.requests.delete", return_value=response(payload={"status": "deleted"})) as delete,
+        patch("app.requests.post", side_effect=[response(payload=assigned), response(payload=archived)]) as post,
+        patch("app.requests.delete") as delete,
     ):
         result = client.post("/api/spool-assignment", json={
             "barcode": "TARGET", "printer_id": 7, "ams_id": 255, "tray_id": 0,
         })
 
-    assert result.get_json()["deleted_existing"] is True
-    assert delete.call_args.args[0].endswith("/api/v1/inventory/spools/11")
-    assert app_module.load_spool_barcodes() == {"TARGET": 22}
+    assert result.get_json()["archived_existing"] is True
+    assert post.call_args_list[1].args[0].endswith("/api/v1/inventory/spools/11/archive")
+    delete.assert_not_called()
+    assert app_module.load_spool_barcodes() == {"TARGET": 22, "EMPTY-SPOOL": 11}
